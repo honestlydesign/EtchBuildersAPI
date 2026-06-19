@@ -1,0 +1,20 @@
+/* omide-test-hero */
+.omide-test-hero {
+	display: flex;
+	color: var(--test-color, #ff0000);
+}
+
+/* omide-test-hero__title */
+.omide-test-hero__title {
+	margin: 0;
+	font-weight: 700;
+	@media (--tablet) {
+		font-size: 1.5rem;
+	}
+}
+
+/* omide-test-grid */
+.omide-test-grid .omide-test-grid__item {
+	display: grid;
+	gap: 1rem;
+}
