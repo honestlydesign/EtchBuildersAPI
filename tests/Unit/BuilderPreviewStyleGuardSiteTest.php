@@ -63,21 +63,6 @@ final class BuilderPreviewStyleGuardSiteTest extends TestCase {
 		return array( get_class( $class ), 'component' );
 	}
 
-	/**
-	 * A synthetic entity with an unregistered class token (triggers Rule D).
-	 *
-	 * @return array{class-string, string}
-	 */
-	private function dirty_entity(): array {
-		$class = new class {
-			public static function build_markup(): string {
-				// Raw markup with a phantom class token not in etch_styles.
-				return '<!-- wp:etch/element {"tag":"div","attributes":{"class":"phantom-dirty-class"},"styles":[]} --><!-- /wp:etch/element -->';
-			}
-		};
-		return array( get_class( $class ), 'component' );
-	}
-
 	public function test_validate_site_passes_for_synthetic_clean_entities(): void {
 		Environment::reset();
 		ClassStyleRegistry::reset_cache();
@@ -217,11 +202,12 @@ final class BuilderPreviewStyleGuardSiteTest extends TestCase {
 
 		ClassStyleRegistry::reset_cache();
 
-		$errors = BuilderPreviewStyleGuard::validate_site(
-			array(
-				array( 'SyntheticCompound', 'component' ),
-			)
+		/** @var list<array{class-string, string}> $entities */
+		$entities = array(
+			array( 'SyntheticCompound', 'component' ),
 		);
+
+		$errors = BuilderPreviewStyleGuard::validate_site( $entities );
 
 		// Rule F may or may not fire depending on standalone resolution,
 		// but the site validation must not crash and must return an array.

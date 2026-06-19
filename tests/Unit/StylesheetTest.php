@@ -20,12 +20,9 @@ use PHPUnit\Framework\TestCase;
 final class StylesheetTest extends TestCase {
 
 	private function storage(): \HonestlyDesign\EtchBuilders\Support\NullStorage {
+		Environment::reset();
 		$storage = Environment::storage();
-		if ( ! $storage instanceof \HonestlyDesign\EtchBuilders\Support\NullStorage ) {
-			Environment::reset();
-			$storage = Environment::storage();
-		}
-		return $storage;
+		return $storage instanceof \HonestlyDesign\EtchBuilders\Support\NullStorage ? $storage : new \HonestlyDesign\EtchBuilders\Support\NullStorage();
 	}
 
 	public function test_register_references_creates_aggregate_stylesheet(): void {
