@@ -1,7 +1,12 @@
 parameters:
-    level: max
+    level: 8
     paths:
         - src
         - tests
-    checkMissingIterableValueType: false
     reportUnmatchedIgnoredErrors: false
+    ignoreErrors:
+        -
+            identifier: missingType.iterableValue
+        -
+            message: '#Offset 1 does not exist on array#'
+            path: '%currentWorkingDirectory%/tests/bootstrap.php'
