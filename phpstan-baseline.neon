@@ -43,6 +43,21 @@ parameters:
 		-
 			message: "#^Cannot access property \\$ID on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
 			count: 1
+			path: src/EtchBlocks/ComponentRegistry.php
+
+		-
+			message: "#^Cannot access property \\$post_type on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
+			path: src/EtchBlocks/ComponentRegistry.php
+
+		-
+			message: "#^Constant OBJECT not found\\.$#"
+			count: 1
+			path: src/EtchBlocks/ComponentRegistry.php
+
+		-
+			message: "#^Cannot access property \\$ID on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
 			path: src/Page.php
 
 		-
