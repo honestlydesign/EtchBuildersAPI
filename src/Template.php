@@ -59,7 +59,7 @@ final class Template extends AbstractContentBuilder {
 	 * @return int|WP_Error
 	 * @throws InvalidArgumentException When slug or content is missing.
 	 */
-	public function register(): int|WP_Error {
+	public function register(): int|RegistrationResult|WP_Error {
 		if ( $this->is_dev_only() && ! Environment::mode()->is_dev_mode() ) {
 			return 0;
 		}
