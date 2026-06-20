@@ -260,7 +260,21 @@ abstract class AbstractContentBuilder {
 	 * @param string       $owner_key Builder owner key.
 	 * @return int|RegistrationResult
 	 */
-	protected function register_stylesheets_for_result( int|RegistrationResult $result, string $owner_key ): int|RegistrationResult {
+	/**
+	 * Register stylesheets and return the combined result.
+	 *
+	 * Accepts int (post ID), RegistrationResult, or WP_Error. WP_Error is
+	 * converted to a RegistrationResult::error() before returning.
+	 *
+	 * @param int|RegistrationResult|\WP_Error $result   The insertion/update result.
+	 * @param string                           $owner_key Stylesheet owner key.
+	 * @return int|RegistrationResult
+	 */
+	protected function register_stylesheets_for_result( int|RegistrationResult|\WP_Error $result, string $owner_key ): int|RegistrationResult {
+		if ( $result instanceof \WP_Error ) {
+			return RegistrationResult::error( $result->get_error_code(), $result->get_error_message() );
+		}
+
 		if ( $result instanceof RegistrationResult ) {
 			return $result;
 		}
