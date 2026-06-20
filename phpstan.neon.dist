@@ -1,3 +1,6 @@
+includes:
+    - phpstan-baseline.neon
+
 parameters:
     level: 8
     paths:
@@ -7,6 +10,5 @@ parameters:
     ignoreErrors:
         -
             identifier: missingType.iterableValue
-        -
-            message: '#Offset 1 does not exist on array#'
-            path: '%currentWorkingDirectory%/tests/bootstrap.php'
+    scanDirectories:
+        - vendor/php-stubs/wordpress-stubs

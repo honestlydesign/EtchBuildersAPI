@@ -1,0 +1,126 @@
+parameters:
+	ignoreErrors:
+		-
+			message: "#^Cannot access property \\$ID on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
+			path: src/ComponentRegistrar.php
+
+		-
+			message: "#^Cannot access property \\$post_content on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
+			path: src/ComponentRegistrar.php
+
+		-
+			message: "#^Cannot access property \\$post_excerpt on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
+			path: src/ComponentRegistrar.php
+
+		-
+			message: "#^Cannot access property \\$post_name on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
+			path: src/ComponentRegistrar.php
+
+		-
+			message: "#^Cannot access property \\$post_title on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
+			path: src/ComponentRegistrar.php
+
+		-
+			message: "#^Constant OBJECT not found\\.$#"
+			count: 1
+			path: src/ComponentRegistrar.php
+
+		-
+			message: "#^Instanceof between bool\\|HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult and WP_Error will always evaluate to false\\.$#"
+			count: 2
+			path: src/ComponentRegistrar.php
+
+		-
+			message: "#^Parameter \\#1 \\$object_or_class of function property_exists expects object\\|string, array\\<int\\|string, mixed\\>\\|WP_Post given\\.$#"
+			count: 1
+			path: src/Content/ContentPostRegistrar.php
+
+		-
+			message: "#^Cannot access property \\$ID on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
+			path: src/Page.php
+
+		-
+			message: "#^Cannot access property \\$post_type on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
+			path: src/Page.php
+
+		-
+			message: "#^Constant OBJECT not found\\.$#"
+			count: 1
+			path: src/Page.php
+
+		-
+			message: "#^Method HonestlyDesign\\\\EtchBuilders\\\\Page\\:\\:register\\(\\) should return int\\|WP_Error but returns HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult\\|int\\.$#"
+			count: 2
+			path: src/Page.php
+
+		-
+			message: "#^Parameter \\#1 \\$result of method HonestlyDesign\\\\EtchBuilders\\\\Content\\\\AbstractContentBuilder\\:\\:register_stylesheets_for_result\\(\\) expects HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult\\|int, int\\|WP_Error given\\.$#"
+			count: 2
+			path: src/Page.php
+
+		-
+			message: "#^Cannot access property \\$ID on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
+			path: src/PatternRegistrar.php
+
+		-
+			message: "#^Cannot access property \\$post_content on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
+			path: src/PatternRegistrar.php
+
+		-
+			message: "#^Cannot access property \\$post_excerpt on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
+			path: src/PatternRegistrar.php
+
+		-
+			message: "#^Cannot access property \\$post_name on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
+			path: src/PatternRegistrar.php
+
+		-
+			message: "#^Cannot access property \\$post_title on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			count: 1
+			path: src/PatternRegistrar.php
+
+		-
+			message: "#^Constant OBJECT not found\\.$#"
+			count: 1
+			path: src/PatternRegistrar.php
+
+		-
+			message: "#^Instanceof between bool\\|HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult and WP_Error will always evaluate to false\\.$#"
+			count: 1
+			path: src/PatternRegistrar.php
+
+		-
+			message: "#^Method HonestlyDesign\\\\EtchBuilders\\\\Post\\:\\:register\\(\\) should return int\\|WP_Error but returns HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult\\|int\\.$#"
+			count: 2
+			path: src/Post.php
+
+		-
+			message: "#^Parameter \\#1 \\$result of method HonestlyDesign\\\\EtchBuilders\\\\Content\\\\AbstractContentBuilder\\:\\:register_stylesheets_for_result\\(\\) expects HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult\\|int, int\\|WP_Error given\\.$#"
+			count: 2
+			path: src/Post.php
+
+		-
+			message: "#^Method HonestlyDesign\\\\EtchBuilders\\\\Template\\:\\:register\\(\\) should return int\\|WP_Error but returns HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult\\|int\\.$#"
+			count: 2
+			path: src/Template.php
+
+		-
+			message: "#^Parameter \\#1 \\$result of method HonestlyDesign\\\\EtchBuilders\\\\Content\\\\AbstractContentBuilder\\:\\:register_stylesheets_for_result\\(\\) expects HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult\\|int, int\\|WP_Error given\\.$#"
+			count: 2
+			path: src/Template.php
+
+		-
+			message: "#^Offset 1 does not exist on array\\{0\\: array\\{string, int\\<\\-1, max\\>\\}, 1\\?\\: array\\{string, int\\<\\-1, max\\>\\}, 2\\?\\: array\\{string, int\\<\\-1, max\\>\\}, 3\\?\\: array\\{string, int\\<\\-1, max\\>\\}, 4\\?\\: array\\{''\\|'/', int\\<\\-1, max\\>\\}, 5\\?\\: array\\{string, int\\<\\-1, max\\>\\}, 6\\?\\: array\\{non\\-falsy\\-string, int\\<\\-1, max\\>\\}\\}\\.$#"
+			count: 1
+			path: tests/bootstrap.php
