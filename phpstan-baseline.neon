@@ -36,6 +36,11 @@ parameters:
 			path: src/ComponentRegistrar.php
 
 		-
+			message: "#^Parameter \\#1 \\$error_code of static method HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult\\:\\:error\\(\\) expects string, int\\|string given\\.$#"
+			count: 1
+			path: src/Content/AbstractContentBuilder.php
+
+		-
 			message: "#^Parameter \\#1 \\$object_or_class of function property_exists expects object\\|string, array\\<int\\|string, mixed\\>\\|WP_Post given\\.$#"
 			count: 1
 			path: src/Content/ContentPostRegistrar.php
@@ -72,11 +77,6 @@ parameters:
 
 		-
 			message: "#^Method HonestlyDesign\\\\EtchBuilders\\\\Page\\:\\:register\\(\\) should return int\\|WP_Error but returns HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult\\|int\\.$#"
-			count: 2
-			path: src/Page.php
-
-		-
-			message: "#^Parameter \\#1 \\$result of method HonestlyDesign\\\\EtchBuilders\\\\Content\\\\AbstractContentBuilder\\:\\:register_stylesheets_for_result\\(\\) expects HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult\\|int, int\\|WP_Error given\\.$#"
 			count: 2
 			path: src/Page.php
 
@@ -121,17 +121,7 @@ parameters:
 			path: src/Post.php
 
 		-
-			message: "#^Parameter \\#1 \\$result of method HonestlyDesign\\\\EtchBuilders\\\\Content\\\\AbstractContentBuilder\\:\\:register_stylesheets_for_result\\(\\) expects HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult\\|int, int\\|WP_Error given\\.$#"
-			count: 2
-			path: src/Post.php
-
-		-
 			message: "#^Method HonestlyDesign\\\\EtchBuilders\\\\Template\\:\\:register\\(\\) should return int\\|WP_Error but returns HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult\\|int\\.$#"
-			count: 2
-			path: src/Template.php
-
-		-
-			message: "#^Parameter \\#1 \\$result of method HonestlyDesign\\\\EtchBuilders\\\\Content\\\\AbstractContentBuilder\\:\\:register_stylesheets_for_result\\(\\) expects HonestlyDesign\\\\EtchBuilders\\\\RegistrationResult\\|int, int\\|WP_Error given\\.$#"
 			count: 2
 			path: src/Template.php
 
