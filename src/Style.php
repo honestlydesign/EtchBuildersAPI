@@ -478,6 +478,18 @@ final class Style {
 		}
 
 		if ( null !== $preferred_id && self::is_valid_style_id( $preferred_id ) ) {
+			$conflicting_selector = self::conflicting_selector_for_style_id( $preferred_id, $selector_key );
+			if ( null !== $conflicting_selector ) {
+				throw new RuntimeException(
+					sprintf(
+						'Legacy StylesParser comment ID `%s` is already used by selector `%s`; selector `%s` did not match an existing style. Remove the comment or update the existing style by selector before reusing the ID.',
+						$preferred_id,
+						'' !== $conflicting_selector ? $conflicting_selector : '(missing selector)',
+						$selector_key
+					)
+				);
+			}
+
 			return $preferred_id;
 		}
 
@@ -496,6 +508,38 @@ final class Style {
 	 */
 	private static function is_valid_style_id( string $style_id ): bool {
 		return '' !== trim( $style_id ) && 1 === preg_match( '/^[A-Za-z0-9_-]+$/', trim( $style_id ) );
+	}
+
+	/**
+	 * Return the conflicting selector when a style ID is already occupied.
+	 *
+	 * @param string $style_id     Proposed style ID.
+	 * @param string $selector_key Normalized selector key for the new style.
+	 */
+	private static function conflicting_selector_for_style_id( string $style_id, string $selector_key ): ?string {
+		if ( isset( self::$registry[ $style_id ] ) ) {
+			$selector = self::$registry[ $style_id ]['selector'];
+			if ( StylesParserRuleScanner::normalize_selector_key( $selector ) !== $selector_key ) {
+				return $selector;
+			}
+
+			return null;
+		}
+
+		$persisted = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
+		if ( ! is_array( $persisted ) || ! isset( $persisted[ $style_id ] ) || ! is_array( $persisted[ $style_id ] ) ) {
+			return null;
+		}
+
+		$selector = isset( $persisted[ $style_id ]['selector'] ) && is_string( $persisted[ $style_id ]['selector'] )
+			? $persisted[ $style_id ]['selector']
+			: '';
+
+		if ( StylesParserRuleScanner::normalize_selector_key( $selector ) !== $selector_key ) {
+			return $selector;
+		}
+
+		return null;
 	}
 
 	/**

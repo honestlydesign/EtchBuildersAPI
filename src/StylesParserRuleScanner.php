@@ -193,8 +193,8 @@ final class StylesParserRuleScanner {
 					return array( $length, $preferred_id );
 				}
 
-				$comment_body  = substr( $content, $pos + 2, $comment_end - $pos - 2 );
-				$preferred_id = self::preferred_id_from_comment_body( $comment_body ) ?? $preferred_id;
+				$comment_body = substr( $content, $pos + 2, $comment_end - $pos - 2 );
+				$preferred_id = self::preferred_id_from_comment_body( $comment_body );
 				$pos          = $comment_end + 2;
 				continue;
 			}

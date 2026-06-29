@@ -115,6 +115,40 @@ final class StylesParserTest extends TestCase {
 		self::assertSame( '.comment-free-card', $parser->get_from_id( 'old-custom-id' )?->to_array()['selector'] ?? null );
 	}
 
+	public function test_parser_ignores_legacy_comment_id_when_intervening_comment_is_not_an_id(): void {
+		$parser = StylesParser::new(
+			$this->write_temp_css( "/* old-custom-id */\n/* documentation note */\n.comment-free-card:hover { color: red; }" )
+		);
+
+		$ids = $parser->get_style_ids();
+
+		self::assertCount( 1, $ids );
+		self::assertNotSame( 'old-custom-id', $ids[0] );
+		self::assertMatchesRegularExpression( '/^omide-style-[A-Za-z0-9_-]{12}$/', $ids[0] );
+		self::assertSame( '.comment-free-card:hover', $parser->get_from_id( $ids[0] )?->to_array()['selector'] ?? null );
+	}
+
+	public function test_parser_rejects_legacy_comment_id_already_used_by_different_selector(): void {
+		Environment::storage()->set(
+			'etch_styles',
+			array(
+				'occupied-style-id' => array(
+					'selector' => '.existing-card',
+					'css'      => 'color: green;',
+					'type'     => 'class',
+				),
+			)
+		);
+
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'Legacy StylesParser comment ID `occupied-style-id` is already used by selector `.existing-card`' );
+		$this->expectExceptionMessage( 'selector `.new-card` did not match an existing style' );
+
+		StylesParser::new(
+			$this->write_temp_css( '/* occupied-style-id */ .new-card { color: red; }' )
+		);
+	}
+
 	public function test_parser_generates_id_when_no_legacy_comment_is_present(): void {
 		$parser = StylesParser::new(
 			$this->write_temp_css( '.comment-free-card:hover { color: red; }' )
