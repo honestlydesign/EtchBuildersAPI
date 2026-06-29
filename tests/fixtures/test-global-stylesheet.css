@@ -1,0 +1,9 @@
+.global-fixture {
+	color: var(--test-color, #ff0000);
+}
+
+@media (--tablet) {
+	.global-fixture {
+		color: blue;
+	}
+}

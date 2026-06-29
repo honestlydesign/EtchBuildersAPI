@@ -14,13 +14,7 @@ namespace HonestlyDesign\EtchBuilders;
  */
 final class StylesValidator {
 
-	private const STYLE_BLOCK_PATTERN = '/\/\*\s*([A-Za-z0-9_-]+)\s*\*\/\s*([^{]+)\{/s';
-
-	private const SINGLE_CLASS_SELECTOR_PATTERN = '/^\.[A-Za-z0-9_-]+$/';
-
 	private const NESTED_FORBIDDEN_AT_RULE_PATTERN = '/@(?:keyframes|property|import|supports|layer|charset|font-face)\b/i';
-
-	private const STYLESHEET_ONLY_AT_RULE_PATTERN = '/^\s*@(?:media|keyframes|property)\b/i';
 
 	/**
 	 * Prevent direct instantiation.
@@ -83,52 +77,39 @@ final class StylesValidator {
 			return array();
 		}
 
-		$errors       = array();
-		$offset       = 0;
-		$content_len  = strlen( $content );
-		$block_number = 0;
+		$errors        = array();
+		$selector_keys = array();
+		$rules         = StylesParserRuleScanner::scan_style_rules( $content );
 
-		while ( preg_match( self::STYLE_BLOCK_PATTERN, $content, $matches, PREG_OFFSET_CAPTURE, $offset ) ) {
-			++$block_number;
-			$id            = $matches[1][0];
-			$selector      = trim( $matches[2][0] );
-			$match_end     = $matches[2][1] + strlen( $matches[2][0] );
-			$brace_pos     = strpos( $content, '{', $match_end - 1 );
-			$comment_start = $matches[0][1];
+		foreach ( $rules as $index => $rule ) {
+			$block_number = $index + 1;
+			$selector     = $rule['selector'];
 
-			if ( false === $brace_pos ) {
-				$errors[] = self::format_block_error( $block_number, 'Missing opening brace after selector.' );
-				break;
+			if ( '' === $selector ) {
+				$errors[] = self::format_block_error( $block_number, 'Style block is missing a selector.' );
+				continue;
 			}
 
-			if ( self::has_text_between_previous_block_and_comment( $content, $offset, $comment_start ) ) {
-				$errors[] = self::format_block_error(
-					$block_number,
-					'Only `/* style-id */ selector { css }` blocks are allowed. Remove root-level CSS outside style blocks.'
-				);
+			$root_at_rule = self::root_at_rule_name( $selector );
+			if ( null !== $root_at_rule ) {
+				$errors[] = self::format_block_error( $block_number, self::format_root_at_rule_error( $root_at_rule ) );
+				continue;
 			}
 
-			if ( self::selector_uses_stylesheet_only_at_rule( $selector ) ) {
+			$selector_key = StylesParserRuleScanner::normalize_selector_key( $selector );
+			if ( isset( $selector_keys[ $selector_key ] ) ) {
 				$errors[] = self::format_block_error(
 					$block_number,
-					sprintf(
-						'StylesParser cannot register root at-rules such as `%s`. Move @media inside the relevant style block; use ->stylesheet() only for true global CSS such as @keyframes or @property.',
-						$selector
-					)
+					sprintf( 'Duplicate selector `%s`.', $selector_key )
 				);
-			} elseif ( StylesParserMode::CLASS_PROP === $mode && 1 !== preg_match( self::SINGLE_CLASS_SELECTOR_PATTERN, $selector ) ) {
+			}
+			$selector_keys[ $selector_key ] = true;
+
+			if ( StylesParserMode::CLASS_PROP === $mode && null === StylesParserRuleScanner::single_class_token( $selector ) ) {
 				$errors[] = self::format_block_error(
 					$block_number,
 					sprintf(
 						'Class prop styles require a single root class selector, got `%s`.',
-						$selector
-					)
-				);
-			} elseif ( StylesParserMode::CLASS_PROP === $mode && self::selector_uses_forbidden_at_rule( $selector ) ) {
-				$errors[] = self::format_block_error(
-					$block_number,
-					sprintf(
-						'Class prop styles cannot use at-rule selectors such as `%s`.',
 						$selector
 					)
 				);
@@ -142,40 +123,19 @@ final class StylesValidator {
 				);
 			}
 
-			if ( '' === $selector ) {
-				$errors[] = self::format_block_error( $block_number, 'Style block is missing a selector.' );
-			}
-
-			$css_result = self::extract_brace_content( $content, $brace_pos + 1, $content_len );
-			if ( null === $css_result ) {
-				$errors[] = self::format_block_error( $block_number, 'Unclosed style block.' );
-				break;
-			}
-
-			list( $css, $new_pos ) = $css_result;
-
-			if ( 1 === preg_match( self::NESTED_FORBIDDEN_AT_RULE_PATTERN, $css ) ) {
+			if ( 1 === preg_match( self::NESTED_FORBIDDEN_AT_RULE_PATTERN, self::strip_css_comments_and_strings( $rule['css'] ), $matches ) ) {
 				$errors[] = self::format_block_error(
 					$block_number,
 					sprintf(
-						'Style `%s` can only nest @media at-rules. Register @keyframes, @property, and other true global CSS with ->stylesheet() instead.',
-						$id
+						'Style `%s` cannot nest global at-rules such as %s. Use Stylesheet or ->stylesheet() for true global CSS.',
+						$selector_key,
+						$matches[0]
 					)
 				);
 			}
-
-			$offset = $new_pos;
 		}
 
-		if ( self::has_trailing_css_outside_blocks( $content, $offset ) ) {
-			$errors[] = 'CSS contains root-level rules outside `/* style-id */` blocks. Move @media inside the relevant style block; use ->stylesheet() only for true global CSS such as @keyframes or @property.';
-		}
-
-		if ( 0 === $block_number ) {
-			$errors[] = 'CSS file must define at least one `/* style-id */` block.';
-		}
-
-		return $errors;
+		return array_merge( $errors, self::validate_unparsed_root_content( $content, $rules ) );
 	}
 
 	/**
@@ -193,24 +153,6 @@ final class StylesValidator {
 	}
 
 	/**
-	 * Check whether a selector uses a forbidden at-rule in class prop mode.
-	 *
-	 * @param string $selector CSS selector.
-	 */
-	private static function selector_uses_forbidden_at_rule( string $selector ): bool {
-		return 1 === preg_match( '/^\s*@/', $selector );
-	}
-
-	/**
-	 * Check whether a selector uses an at-rule that must live in a stylesheet file.
-	 *
-	 * @param string $selector CSS selector.
-	 */
-	private static function selector_uses_stylesheet_only_at_rule( string $selector ): bool {
-		return 1 === preg_match( self::STYLESHEET_ONLY_AT_RULE_PATTERN, $selector );
-	}
-
-	/**
 	 * Check whether a fixed component selector is allowed.
 	 *
 	 * @param string $selector CSS selector.
@@ -220,7 +162,7 @@ final class StylesValidator {
 			return false;
 		}
 
-		return 1 !== preg_match( '/^\s*@/', $selector );
+		return null === self::root_at_rule_name( $selector );
 	}
 
 	/**
@@ -249,43 +191,6 @@ final class StylesValidator {
 	}
 
 	/**
-	 * Check whether non-comment text exists between blocks.
-	 *
-	 * @param string $content       CSS content.
-	 * @param int    $previous_end  End offset of previous block.
-	 * @param int    $comment_start Start offset of current style ID comment.
-	 */
-	private static function has_text_between_previous_block_and_comment( string $content, int $previous_end, int $comment_start ): bool {
-		if ( $comment_start <= $previous_end ) {
-			return false;
-		}
-
-		$between = substr( $content, $previous_end, $comment_start - $previous_end );
-		$between = preg_replace( '/\/\*.*?\*\//s', '', $between );
-		if ( null === $between ) {
-			return false;
-		}
-
-		return '' !== trim( $between );
-	}
-
-	/**
-	 * Check whether CSS remains after the final parsed style block.
-	 *
-	 * @param string $content CSS content.
-	 * @param int    $offset  Offset after final style block.
-	 */
-	private static function has_trailing_css_outside_blocks( string $content, int $offset ): bool {
-		$remainder = substr( $content, $offset );
-		$remainder = preg_replace( '/\/\*.*?\*\//s', '', $remainder );
-		if ( null === $remainder ) {
-			return false;
-		}
-
-		return '' !== trim( $remainder );
-	}
-
-	/**
 	 * Format a block-scoped validation error.
 	 *
 	 * @param int    $block_number Style block number.
@@ -296,48 +201,177 @@ final class StylesValidator {
 	}
 
 	/**
-	 * Extract content between braces, handling nested braces.
+	 * Find a root at-rule name for a selector-like token.
 	 *
-	 * @param string $content CSS content.
-	 * @param int    $pos     Position after opening brace.
-	 * @param int    $length  Content length.
-	 * @return array{0: string, 1: int}|null CSS content and new position, or null on failure.
+	 * @param string $selector CSS selector or root at-rule.
 	 */
-	private static function extract_brace_content( string $content, int $pos, int $length ): ?array {
-		$depth       = 1;
-		$start       = $pos;
-		$in_string   = false;
-		$string_char = '';
-
-		while ( $pos < $length && $depth > 0 ) {
-			$char = $content[ $pos ];
-
-			if ( $in_string ) {
-				if ( '\\' === $char && $pos + 1 < $length ) {
-					$pos += 2;
-					continue;
-				}
-				if ( $char === $string_char ) {
-					$in_string = false;
-				}
-			} elseif ( '"' === $char || "'" === $char ) {
-				$in_string   = true;
-				$string_char = $char;
-			} elseif ( '{' === $char ) {
-				++$depth;
-			} elseif ( '}' === $char ) {
-				--$depth;
-			}
-
-			++$pos;
-		}
-
-		if ( 0 !== $depth ) {
+	private static function root_at_rule_name( string $selector ): ?string {
+		if ( 1 !== preg_match( '/^\s*@([A-Za-z-]+)/', $selector, $matches ) ) {
 			return null;
 		}
 
-		$css = substr( $content, $start, $pos - $start - 1 );
+		return '@' . strtolower( $matches[1] );
+	}
 
-		return array( $css, $pos );
+	/**
+	 * Validate content not consumed as selector blocks.
+	 *
+	 * @param string $content CSS content.
+	 * @param array<int, array{selector: string, css: string, start: int, end: int}> $rules Scanned root blocks.
+	 * @return array<int, string>
+	 */
+	private static function validate_unparsed_root_content( string $content, array $rules ): array {
+		$errors       = array();
+		$segment_start = 0;
+
+		foreach ( $rules as $rule ) {
+			if ( $rule['start'] > $segment_start ) {
+				$errors = array_merge( $errors, self::validate_root_segment( substr( $content, $segment_start, $rule['start'] - $segment_start ) ) );
+			}
+
+			$segment_start = max( $segment_start, $rule['end'] );
+		}
+
+		if ( $segment_start < strlen( $content ) ) {
+			$errors = array_merge( $errors, self::validate_root_segment( substr( $content, $segment_start ) ) );
+		}
+
+		return $errors;
+	}
+
+	/**
+	 * Validate a root segment outside parsed selector blocks.
+	 *
+	 * @param string $segment CSS content outside scanned blocks.
+	 * @return array<int, string>
+	 */
+	private static function validate_root_segment( string $segment ): array {
+		$segment = preg_replace( '/\/\*.*?\*\//s', ' ', $segment );
+		if ( null === $segment ) {
+			return array();
+		}
+
+		$segment = trim( $segment );
+		if ( '' === $segment ) {
+			return array();
+		}
+
+		$errors = array();
+		if ( preg_match_all( '/@([A-Za-z-]+)/', $segment, $matches ) >= 1 ) {
+			foreach ( $matches[1] as $name ) {
+				$errors[] = self::format_root_at_rule_error( '@' . strtolower( $name ) );
+			}
+
+			return array_values( array_unique( $errors ) );
+		}
+
+		return array(
+			sprintf(
+				'CSS contains root-level content outside selector blocks near `%s`.',
+				self::shorten_for_error( $segment )
+			),
+		);
+	}
+
+	/**
+	 * Strip comments and strings before semantic at-rule matching.
+	 *
+	 * @param string $css CSS block content.
+	 */
+	private static function strip_css_comments_and_strings( string $css ): string {
+		$result      = '';
+		$length      = strlen( $css );
+		$pos         = 0;
+		$in_string   = false;
+		$string_char = '';
+		$in_comment  = false;
+
+		while ( $pos < $length ) {
+			$char = $css[ $pos ];
+
+			if ( $in_comment ) {
+				if ( substr( $css, $pos, 2 ) === '*/' ) {
+					$in_comment = false;
+					$result    .= '  ';
+					$pos       += 2;
+					continue;
+				}
+
+				$result .= ' ';
+				++$pos;
+				continue;
+			}
+
+			if ( $in_string ) {
+				if ( '\\' === $char && $pos + 1 < $length ) {
+					$result .= '  ';
+					$pos    += 2;
+					continue;
+				}
+
+				if ( $char === $string_char ) {
+					$in_string = false;
+				}
+
+				$result .= ' ';
+				++$pos;
+				continue;
+			}
+
+			if ( substr( $css, $pos, 2 ) === '/*' ) {
+				$in_comment = true;
+				$result    .= '  ';
+				$pos       += 2;
+				continue;
+			}
+
+			if ( '"' === $char || "'" === $char ) {
+				$in_string   = true;
+				$string_char = $char;
+				$result     .= ' ';
+				++$pos;
+				continue;
+			}
+
+			$result .= $char;
+			++$pos;
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Format root at-rule guidance.
+	 *
+	 * @param string $at_rule At-rule including @.
+	 */
+	private static function format_root_at_rule_error( string $at_rule ): string {
+		if ( '@media' === $at_rule || '@container' === $at_rule ) {
+			return sprintf(
+				'StylesParser cannot parse root-level %1$s. Wrong: .foo { color: red; } %1$s (...) { .foo { color: blue; } } Right: .foo { color: red; %1$s (...) { color: blue; } }',
+				$at_rule
+			);
+		}
+
+		return sprintf(
+			'StylesParser cannot parse root-level %s. Use Stylesheet or ->stylesheet() for global CSS such as @keyframes, @property, @font-face, @import, @supports, @layer, and @charset.',
+			$at_rule
+		);
+	}
+
+	/**
+	 * Shorten root content shown in diagnostics.
+	 *
+	 * @param string $content Root content.
+	 */
+	private static function shorten_for_error( string $content ): string {
+		$content = preg_replace( '/\s+/', ' ', $content );
+		if ( null === $content ) {
+			return '';
+		}
+
+		$content = trim( $content );
+
+		return strlen( $content ) > 80 ? substr( $content, 0, 77 ) . '...' : $content;
 	}
 }

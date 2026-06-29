@@ -11,6 +11,7 @@ namespace HonestlyDesign\EtchBuilders;
 
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\Environment;
+use RuntimeException;
 
 /**
  * Fluent builder for Etch global styles.
@@ -429,6 +430,58 @@ final class Style {
 	 */
 	public static function registered_styles(): array {
 		return self::$registry;
+	}
+
+	/**
+	 * Resolve the style ID that should own a selector.
+	 *
+	 * @param string $selector CSS selector.
+	 * @throws RuntimeException When multiple existing style IDs use the selector.
+	 */
+	public static function resolve_id_for_selector( string $selector ): string {
+		$selector_key = StylesParserRuleScanner::normalize_selector_key( $selector );
+		$matches      = array();
+
+		foreach ( self::$registry as $style_id => $style ) {
+			if ( StylesParserRuleScanner::normalize_selector_key( $style['selector'] ) === $selector_key ) {
+				$matches[ (string) $style_id ] = true;
+			}
+		}
+
+		$persisted = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
+		if ( is_array( $persisted ) ) {
+			foreach ( $persisted as $style_id => $style ) {
+				if ( ! is_array( $style ) || ! isset( $style['selector'] ) || ! is_string( $style['selector'] ) ) {
+					continue;
+				}
+
+				if ( StylesParserRuleScanner::normalize_selector_key( $style['selector'] ) === $selector_key ) {
+					$matches[ (string) $style_id ] = true;
+				}
+			}
+		}
+
+		$matching_ids = array_keys( $matches );
+		if ( 1 === count( $matching_ids ) ) {
+			return $matching_ids[0];
+		}
+
+		if ( count( $matching_ids ) > 1 ) {
+			throw new RuntimeException(
+				sprintf(
+					'Multiple existing Etch styles use selector `%s`: %s.',
+					$selector_key,
+					implode( ', ', $matching_ids )
+				)
+			);
+		}
+
+		$single_class_token = StylesParserRuleScanner::single_class_token( $selector );
+		if ( null !== $single_class_token ) {
+			return $single_class_token;
+		}
+
+		return StylesParserRuleScanner::generated_style_id_for_selector( $selector );
 	}
 
 	/**

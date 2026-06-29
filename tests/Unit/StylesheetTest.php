@@ -19,6 +19,8 @@ use PHPUnit\Framework\TestCase;
  */
 final class StylesheetTest extends TestCase {
 
+	private const FIXTURE_CSS = __DIR__ . '/../fixtures/test-global-stylesheet.css';
+
 	private function storage(): \HonestlyDesign\EtchBuilders\Support\NullStorage {
 		Environment::reset();
 		$storage = Environment::storage();
@@ -30,7 +32,7 @@ final class StylesheetTest extends TestCase {
 		$storage = $this->storage();
 		$owner   = 'test:owner-a';
 		$id      = 'omide-test-sheet-a';
-		$css     = __DIR__ . '/../fixtures/test-stylesheet.css';
+		$css     = self::FIXTURE_CSS;
 
 		$result = Stylesheet::register_references(
 			$owner,
@@ -55,7 +57,7 @@ final class StylesheetTest extends TestCase {
 		$storage = $this->storage();
 		$owner   = 'test:stale-owner';
 		$id      = 'omide-test-stale-sheet';
-		$css     = __DIR__ . '/../fixtures/test-stylesheet.css';
+		$css     = self::FIXTURE_CSS;
 
 		// Register first.
 		Stylesheet::register_references(
@@ -83,7 +85,7 @@ final class StylesheetTest extends TestCase {
 		$storage = $this->storage();
 		$owner   = 'test:stack-owner';
 		$id      = 'omide-test-stack';
-		$css1    = __DIR__ . '/../fixtures/test-stylesheet.css';
+		$css1    = self::FIXTURE_CSS;
 
 		// Two references to the same stylesheet id from the same owner.
 		Stylesheet::register_references(
