@@ -130,7 +130,7 @@ final class ElementBlock implements EtchBlockBuilderInterface {
 	 * @param Attributes $attrs Attributes to set.
 	 */
 	public function attributes( Attributes $attrs ): self {
-		$this->attributes = $attrs;
+		$this->set_attributes_value( $attrs );
 		return $this;
 	}
 
@@ -251,6 +251,8 @@ final class ElementBlock implements EtchBlockBuilderInterface {
 	 * @param string $style_id Style ID to add.
 	 */
 	private function ensure_style( string $style_id ): void {
-		$this->append_style_id_once( $style_id );
+		if ( ! in_array( $style_id, $this->styles, true ) ) {
+			$this->styles[] = $style_id;
+		}
 	}
 }

@@ -112,7 +112,7 @@ final class DynamicElementBlock implements EtchBlockBuilderInterface {
 	 * @param Attributes $attrs Attributes to set.
 	 */
 	public function attributes( Attributes $attrs ): self {
-		$this->attributes = $attrs;
+		$this->set_attributes_value( $attrs );
 		return $this;
 	}
 

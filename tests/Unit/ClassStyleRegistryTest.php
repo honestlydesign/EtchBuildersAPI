@@ -11,9 +11,13 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit;
 
 use HonestlyDesign\EtchBuilders\ClassStyleRegistry;
 use HonestlyDesign\EtchBuilders\Environment;
+use HonestlyDesign\EtchBuilders\EtchBlocks\DynamicElementBlock;
+use HonestlyDesign\EtchBuilders\EtchBlocks\DynamicImageBlock;
 use HonestlyDesign\EtchBuilders\EtchBlocks\ElementBlock;
+use HonestlyDesign\EtchBuilders\EtchBlocks\SvgBlock;
 use HonestlyDesign\EtchBuilders\Style;
 use HonestlyDesign\EtchBuilders\StylesParser;
+use HonestlyDesign\EtchBuilders\Types\Attributes;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -122,6 +126,89 @@ final class ClassStyleRegistryTest extends TestCase {
 		}
 	}
 
+	public function test_element_block_class_auto_registers_missing_class_style(): void {
+		$style_snapshot = Style::snapshot();
+
+		try {
+			Style::reset();
+			Environment::reset();
+			ClassStyleRegistry::reset_cache();
+
+			$attrs = $this->extract_block_attrs(
+				ElementBlock::new()
+					->tag( 'div' )
+					->class( 'btn' )
+					->to_block()
+					->to_string()
+			);
+
+			self::assertSame( 'btn', $attrs['attributes']['class'] );
+			self::assertSame( array( 'btn' ), $attrs['styles'] );
+			self::assertArrayHasKey( 'btn', Style::registered_styles() );
+			self::assertSame( '.btn', Style::registered_styles()['btn']['selector'] );
+		} finally {
+			ClassStyleRegistry::reset_cache();
+			Style::restore( $style_snapshot );
+		}
+	}
+
+	public function test_element_block_class_uses_existing_style_id_for_matching_selector(): void {
+		$style_snapshot = Style::snapshot();
+
+		try {
+			Style::reset();
+			Environment::reset();
+			ClassStyleRegistry::reset_cache();
+
+			Style::new()
+				->id( 'custom-btn-style' )
+				->selector( '.btn' )
+				->css( 'display: inline-flex;' )
+				->type( 'class' )
+				->add();
+
+			$attrs = $this->extract_block_attrs(
+				ElementBlock::new()
+					->tag( 'div' )
+					->class( 'btn' )
+					->to_block()
+					->to_string()
+			);
+
+			self::assertSame( 'btn', $attrs['attributes']['class'] );
+			self::assertSame( array( 'custom-btn-style' ), $attrs['styles'] );
+		} finally {
+			ClassStyleRegistry::reset_cache();
+			Style::restore( $style_snapshot );
+		}
+	}
+
+	public function test_element_block_classes_auto_register_all_class_styles_once(): void {
+		$style_snapshot = Style::snapshot();
+
+		try {
+			Style::reset();
+			Environment::reset();
+			ClassStyleRegistry::reset_cache();
+
+			$attrs = $this->extract_block_attrs(
+				ElementBlock::new()
+					->tag( 'div' )
+					->classes( array( 'btn', 'card', 'btn' ) )
+					->to_block()
+					->to_string()
+			);
+
+			self::assertSame( 'btn card', $attrs['attributes']['class'] );
+			self::assertSame( array( 'btn', 'card' ), $attrs['styles'] ?? array() );
+			self::assertArrayHasKey( 'btn', Style::registered_styles() );
+			self::assertArrayHasKey( 'card', Style::registered_styles() );
+		} finally {
+			ClassStyleRegistry::reset_cache();
+			Style::restore( $style_snapshot );
+		}
+	}
+
 	public function test_attribute_class_appends_resolved_style_ids_to_block(): void {
 		$style_snapshot = Style::snapshot();
 
@@ -136,16 +223,79 @@ final class ClassStyleRegistryTest extends TestCase {
 				->to_block()
 				->to_string();
 
-			$ids = array();
-			if ( function_exists( 'parse_blocks' ) ) {
-				$blocks = parse_blocks( $markup );
-				$block  = $blocks[0] ?? array();
-				$attrs  = is_array( $block ) && isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : array();
-				$ids    = isset( $attrs['styles'] ) && is_array( $attrs['styles'] ) ? $attrs['styles'] : array();
-			}
+			$attrs = $this->extract_block_attrs( $markup );
+			$ids   = isset( $attrs['styles'] ) && is_array( $attrs['styles'] ) ? $attrs['styles'] : array();
 
 			self::assertContains( 'stack', $ids );
 			self::assertContains( 'section', $ids );
+			self::assertArrayHasKey( 'stack', Style::registered_styles() );
+			self::assertArrayHasKey( 'section', Style::registered_styles() );
+		} finally {
+			ClassStyleRegistry::reset_cache();
+			Style::restore( $style_snapshot );
+		}
+	}
+
+	public function test_element_block_attributes_class_auto_registers_and_links_style_ids(): void {
+		$style_snapshot = Style::snapshot();
+
+		try {
+			Style::reset();
+			Environment::reset();
+			ClassStyleRegistry::reset_cache();
+
+			$attrs = $this->extract_block_attrs(
+				ElementBlock::new()
+					->tag( 'div' )
+					->attributes( Attributes::from_array( array( 'class' => 'btn card' ) ) )
+					->to_block()
+					->to_string()
+			);
+
+			self::assertSame( 'btn card', $attrs['attributes']['class'] );
+			self::assertSame( array( 'btn', 'card' ), $attrs['styles'] ?? array() );
+			self::assertArrayHasKey( 'btn', Style::registered_styles() );
+			self::assertArrayHasKey( 'card', Style::registered_styles() );
+		} finally {
+			ClassStyleRegistry::reset_cache();
+			Style::restore( $style_snapshot );
+		}
+	}
+
+	public function test_attributes_class_auto_registers_for_dynamic_element_image_and_svg_blocks(): void {
+		$style_snapshot = Style::snapshot();
+
+		try {
+			Style::reset();
+			Environment::reset();
+			ClassStyleRegistry::reset_cache();
+
+			$dynamic_element_attrs = $this->extract_block_attrs(
+				DynamicElementBlock::new()
+					->tag( 'article' )
+					->attributes( Attributes::from_array( array( 'class' => 'dynamic-card' ) ) )
+					->to_block()
+					->to_string()
+			);
+			$image_attrs           = $this->extract_block_attrs(
+				DynamicImageBlock::new()
+					->attributes( Attributes::from_array( array( 'class' => 'dynamic-image' ) ) )
+					->to_block()
+					->to_string()
+			);
+			$svg_attrs             = $this->extract_block_attrs(
+				SvgBlock::new()
+					->attributes( Attributes::from_array( array( 'class' => 'dynamic-icon' ) ) )
+					->to_block()
+					->to_string()
+			);
+
+			self::assertSame( array( 'dynamic-card' ), $dynamic_element_attrs['styles'] ?? array() );
+			self::assertSame( array( 'dynamic-image' ), $image_attrs['styles'] ?? array() );
+			self::assertSame( array( 'dynamic-icon' ), $svg_attrs['styles'] ?? array() );
+			self::assertArrayHasKey( 'dynamic-card', Style::registered_styles() );
+			self::assertArrayHasKey( 'dynamic-image', Style::registered_styles() );
+			self::assertArrayHasKey( 'dynamic-icon', Style::registered_styles() );
 		} finally {
 			ClassStyleRegistry::reset_cache();
 			Style::restore( $style_snapshot );
@@ -294,5 +444,21 @@ final class ClassStyleRegistryTest extends TestCase {
 		$this->expectExceptionMessage( 'invalid!' );
 
 		ClassStyleRegistry::resolve_class_tokens_to_style_ids( array( 'invalid!token' ) );
+	}
+
+	/**
+	 * Parse the JSON attrs out of a serialized Etch block comment.
+	 *
+	 * @param string $markup Serialized block.
+	 * @return array<string, mixed>
+	 */
+	private function extract_block_attrs( string $markup ): array {
+		preg_match( '/<!-- wp:etch\/[a-z-]+ (\{.*?\})\s*(?:\/)?-->/s', $markup, $matches );
+		self::assertNotEmpty( $matches, 'Failed to find block attrs in: ' . $markup );
+
+		$attrs = json_decode( $matches[1], true );
+		self::assertIsArray( $attrs );
+
+		return $attrs;
 	}
 }

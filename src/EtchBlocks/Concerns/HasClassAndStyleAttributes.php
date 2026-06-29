@@ -12,6 +12,7 @@ namespace HonestlyDesign\EtchBuilders\EtchBlocks\Concerns;
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\ClassStyleRegistry;
 use HonestlyDesign\EtchBuilders\Support\EtchJsonAttribute;
+use HonestlyDesign\EtchBuilders\Types\Attributes;
 
 /**
  * Provides class/style pairing helpers for fluent Etch block builders.
@@ -33,7 +34,10 @@ trait HasClassAndStyleAttributes {
 		$class_name = $this->validate_single_class_token( $class_name );
 
 		$this->append_class_tokens( array( $class_name ) );
-		$this->append_style_id_once( $class_name );
+		ClassStyleRegistry::sync_block_class_style_linkage(
+			$this->extract_class_tokens_from_attributes(),
+			$this->styles
+		);
 
 		return $this;
 	}
@@ -98,6 +102,19 @@ trait HasClassAndStyleAttributes {
 	}
 
 	/**
+	 * Replace attributes while preserving class/style linkage.
+	 *
+	 * @param Attributes $attrs Attributes to set.
+	 */
+	private function set_attributes_value( Attributes $attrs ): void {
+		$this->attributes = Attributes::new();
+
+		foreach ( $attrs->to_array() as $name => $value ) {
+			$this->set_attribute_value( $name, $value );
+		}
+	}
+
+	/**
 	 * Re-sync standalone class style IDs after attrs.styles changes.
 	 */
 	protected function sync_standalone_class_style_linkage(): void {
@@ -114,17 +131,6 @@ trait HasClassAndStyleAttributes {
 	 */
 	protected function extract_class_tokens_from_attributes(): array {
 		return $this->extract_class_tokens( (string) $this->attributes->get( 'class' ) );
-	}
-
-	/**
-	 * Append style ID only once.
-	 *
-	 * @param string $style_id Style ID to add.
-	 */
-	private function append_style_id_once( string $style_id ): void {
-		if ( ! in_array( $style_id, $this->styles, true ) ) {
-			$this->styles[] = $style_id;
-		}
 	}
 
 	/**
