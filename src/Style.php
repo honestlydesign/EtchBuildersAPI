@@ -553,10 +553,6 @@ final class Style {
 			return false;
 		}
 
-		if ( isset( $style['readonly'] ) && true === $style['readonly'] ) {
-			return true;
-		}
-
 		if ( isset( $style['collection'] ) && is_string( $style['collection'] ) && str_starts_with( $style['collection'], 'OhMyIDEtch' ) ) {
 			return true;
 		}
