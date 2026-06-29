@@ -106,13 +106,25 @@ final class StylesParserTest extends TestCase {
 		self::assertSame( 'test-hero', ClassStyleRegistry::resolve_style_id_for_class( 'test-hero' ) );
 	}
 
-	public function test_parser_ignores_legacy_comment_ids(): void {
+	public function test_parser_uses_optional_legacy_comment_id_when_creating_style(): void {
 		$parser = StylesParser::new(
 			$this->write_temp_css( '/* old-custom-id */ .comment-free-card { color: red; }' )
 		);
 
-		self::assertContains( 'comment-free-card', $parser->get_style_ids() );
-		self::assertNull( $parser->get_from_id( 'old-custom-id' ) );
+		self::assertSame( array( 'old-custom-id' ), $parser->get_style_ids() );
+		self::assertSame( '.comment-free-card', $parser->get_from_id( 'old-custom-id' )?->to_array()['selector'] ?? null );
+	}
+
+	public function test_parser_generates_id_when_no_legacy_comment_is_present(): void {
+		$parser = StylesParser::new(
+			$this->write_temp_css( '.comment-free-card:hover { color: red; }' )
+		);
+
+		$ids = $parser->get_style_ids();
+
+		self::assertCount( 1, $ids );
+		self::assertMatchesRegularExpression( '/^omide-style-[A-Za-z0-9_-]{12}$/', $ids[0] );
+		self::assertSame( '.comment-free-card:hover', $parser->get_from_id( $ids[0] )?->to_array()['selector'] ?? null );
 	}
 
 	public function test_parser_reuses_persisted_id_for_matching_selector(): void {
@@ -132,6 +144,26 @@ final class StylesParserTest extends TestCase {
 		);
 
 		self::assertSame( array( 'legacy-custom-card' ), $parser->get_style_ids() );
+	}
+
+	public function test_parser_selector_match_wins_over_legacy_comment_id(): void {
+		Environment::storage()->set(
+			'etch_styles',
+			array(
+				'persisted-selector-owner' => array(
+					'selector' => '.selector-owned-card:hover',
+					'css'      => 'color: green;',
+					'type'     => 'custom',
+				),
+			)
+		);
+
+		$parser = StylesParser::new(
+			$this->write_temp_css( '/* stale-comment-id */ .selector-owned-card:hover { color: red; }' )
+		);
+
+		self::assertSame( array( 'persisted-selector-owner' ), $parser->get_style_ids() );
+		self::assertNull( $parser->get_from_id( 'stale-comment-id' ) );
 	}
 
 	public function test_parser_reuses_persisted_id_for_selector_list_with_comma_spacing_difference(): void {

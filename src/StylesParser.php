@@ -122,7 +122,7 @@ final class StylesParser {
 				continue;
 			}
 
-			$id    = Style::resolve_id_for_selector( $selector );
+			$id    = Style::resolve_id_for_selector( $selector, $rule['preferred_id'] );
 			$style = Style::new()
 				->id( $id )
 				->selector( $selector )

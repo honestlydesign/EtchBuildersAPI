@@ -24,7 +24,7 @@ final class StylesParserRuleScanner {
 	 * Scan root-level style rules in file order.
 	 *
 	 * @param string $content CSS content.
-	 * @return array<int, array{selector: string, css: string, start: int, end: int}>
+	 * @return array<int, array{selector: string, css: string, start: int, end: int, preferred_id: string|null}>
 	 */
 	public static function scan_style_rules( string $content ): array {
 		$rules  = array();
@@ -32,7 +32,7 @@ final class StylesParserRuleScanner {
 		$pos    = 0;
 
 		while ( $pos < $length ) {
-			$pos = self::skip_root_whitespace_and_comments( $content, $pos, $length );
+			list( $pos, $preferred_id ) = self::skip_root_whitespace_and_comments( $content, $pos, $length );
 			if ( $pos >= $length ) {
 				break;
 			}
@@ -56,10 +56,11 @@ final class StylesParserRuleScanner {
 
 			list( $css, $new_pos ) = $css_result;
 			$rules[]               = array(
-				'selector' => trim( substr( $content, $selector_start, $brace_pos - $selector_start ) ),
-				'css'      => $css,
-				'start'    => $selector_start,
-				'end'      => $new_pos,
+				'selector'     => trim( substr( $content, $selector_start, $brace_pos - $selector_start ) ),
+				'css'          => $css,
+				'start'        => $selector_start,
+				'end'          => $new_pos,
+				'preferred_id' => $preferred_id,
 			);
 			$pos                   = $new_pos;
 		}
@@ -175,8 +176,11 @@ final class StylesParserRuleScanner {
 	 * @param string $content CSS content.
 	 * @param int    $pos     Current offset.
 	 * @param int    $length  Content length.
+	 * @return array{0: int, 1: string|null}
 	 */
-	private static function skip_root_whitespace_and_comments( string $content, int $pos, int $length ): int {
+	private static function skip_root_whitespace_and_comments( string $content, int $pos, int $length ): array {
+		$preferred_id = null;
+
 		while ( $pos < $length ) {
 			if ( ctype_space( $content[ $pos ] ) ) {
 				++$pos;
@@ -186,17 +190,38 @@ final class StylesParserRuleScanner {
 			if ( self::starts_with_at( $content, $pos, '/*' ) ) {
 				$comment_end = strpos( $content, '*/', $pos + 2 );
 				if ( false === $comment_end ) {
-					return $length;
+					return array( $length, $preferred_id );
 				}
 
-				$pos = $comment_end + 2;
+				$comment_body  = substr( $content, $pos + 2, $comment_end - $pos - 2 );
+				$preferred_id = self::preferred_id_from_comment_body( $comment_body ) ?? $preferred_id;
+				$pos          = $comment_end + 2;
 				continue;
 			}
 
 			break;
 		}
 
-		return $pos;
+		return array( $pos, $preferred_id );
+	}
+
+	/**
+	 * Extract an optional legacy preferred style ID from a root comment.
+	 *
+	 * Comments are no longer required for StylesParser identity. When present,
+	 * a simple legacy `/* style-id *\/` comment is used only as the create-time
+	 * fallback ID after selector-first existing-style lookup.
+	 *
+	 * @param string $comment_body Raw CSS comment body.
+	 */
+	private static function preferred_id_from_comment_body( string $comment_body ): ?string {
+		$preferred_id = trim( $comment_body );
+
+		if ( '' === $preferred_id || 1 !== preg_match( '/^[A-Za-z0-9_-]+$/', $preferred_id ) ) {
+			return null;
+		}
+
+		return $preferred_id;
 	}
 
 	/**

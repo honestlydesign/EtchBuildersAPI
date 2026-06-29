@@ -435,10 +435,11 @@ final class Style {
 	/**
 	 * Resolve the style ID that should own a selector.
 	 *
-	 * @param string $selector CSS selector.
+	 * @param string      $selector     CSS selector.
+	 * @param string|null $preferred_id Optional create-time style ID from a legacy CSS comment.
 	 * @throws RuntimeException When multiple existing style IDs use the selector.
 	 */
-	public static function resolve_id_for_selector( string $selector ): string {
+	public static function resolve_id_for_selector( string $selector, ?string $preferred_id = null ): string {
 		$selector_key = StylesParserRuleScanner::normalize_selector_key( $selector );
 		$matches      = array();
 
@@ -476,12 +477,25 @@ final class Style {
 			);
 		}
 
+		if ( null !== $preferred_id && self::is_valid_style_id( $preferred_id ) ) {
+			return $preferred_id;
+		}
+
 		$single_class_token = StylesParserRuleScanner::single_class_token( $selector );
 		if ( null !== $single_class_token ) {
 			return $single_class_token;
 		}
 
 		return StylesParserRuleScanner::generated_style_id_for_selector( $selector );
+	}
+
+	/**
+	 * Check whether a value can be used as an Etch style ID.
+	 *
+	 * @param string $style_id Proposed style ID.
+	 */
+	private static function is_valid_style_id( string $style_id ): bool {
+		return '' !== trim( $style_id ) && 1 === preg_match( '/^[A-Za-z0-9_-]+$/', trim( $style_id ) );
 	}
 
 	/**
