@@ -75,6 +75,10 @@ final class ComponentRegistrar {
 		$components = $this->build_components();
 
 		foreach ( $components as $component ) {
+			if ( $component->should_skip_registration() ) {
+				continue;
+			}
+
 			$styles_registration_error = $this->register_manifest_css_assets( $component );
 			if ( $styles_registration_error instanceof WP_Error ) {
 				$report['failed'][ $component->get_key() ] = $styles_registration_error->get_error_message();
@@ -87,7 +91,7 @@ final class ComponentRegistrar {
 				continue;
 			}
 
-			$stylesheet_registration_error = $component->register_stylesheets();
+			$stylesheet_registration_error = self::registration_error( $component->register_stylesheets() );
 			if ( $stylesheet_registration_error instanceof WP_Error ) {
 				$report['failed'][ $component->get_key() ] = $stylesheet_registration_error->get_error_message();
 
@@ -133,6 +137,10 @@ final class ComponentRegistrar {
 				continue;
 			}
 
+			if ( $result <= 0 ) {
+				continue;
+			}
+
 			$report['registered_keys'][] = $component->get_key();
 		}
 
@@ -166,9 +174,13 @@ final class ComponentRegistrar {
 	 * Registers or updates a component by its unique Etch key.
 	 *
 	 * @param Component $component The component builder to persist.
-	 * @return int|WP_Error
+	 * @return int|WP_Error Positive post ID on persistence, 0 when intentionally skipped.
 	 */
 	public function register( Component $component ): int|WP_Error {
+		if ( $component->should_skip_registration() ) {
+			return 0;
+		}
+
 		$slug        = self::COMPONENT_SLUG_PREFIX . \sanitize_key( $component->get_key() );
 		$existing_id = $this->find_post_id_by_slug( $slug );
 
@@ -183,7 +195,7 @@ final class ComponentRegistrar {
 			return $styles_registration_error;
 		}
 
-		$stylesheet_registration_error = $component->register_stylesheets();
+		$stylesheet_registration_error = self::registration_error( $component->register_stylesheets() );
 		if ( $stylesheet_registration_error instanceof WP_Error ) {
 			return $stylesheet_registration_error;
 		}
@@ -218,6 +230,23 @@ final class ComponentRegistrar {
 		$this->cleanup_duplicate_components( $component->get_key(), $slug, (int) $post_id );
 
 		return $this->find_post_id_by_slug( $slug );
+	}
+
+	/**
+	 * Convert package registration results into the registrar's WordPress error contract.
+	 *
+	 * @param bool|RegistrationResult|WP_Error|null $result Registration result.
+	 */
+	private static function registration_error( bool|RegistrationResult|WP_Error|null $result ): ?WP_Error {
+		if ( $result instanceof WP_Error ) {
+			return $result;
+		}
+
+		if ( $result instanceof RegistrationResult && ! $result->is_success() ) {
+			return new WP_Error( $result->get_error_code(), $result->get_error_message() );
+		}
+
+		return null;
 	}
 
 	/**
