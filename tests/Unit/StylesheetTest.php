@@ -124,6 +124,71 @@ final class StylesheetTest extends TestCase {
 		Stylesheet::reset_custom_media();
 	}
 
+	public function test_register_custom_media_persists_custom_media_definitions_stylesheet(): void {
+		Environment::reset();
+		$storage = $this->storage();
+		Stylesheet::reset_custom_media();
+
+		$result = Stylesheet::register_custom_media( 'tablet', '(min-width: 768px)' );
+
+		self::assertTrue( $result );
+
+		$stylesheets = $storage->get( 'etch_global_stylesheets', array() );
+		self::assertIsArray( $stylesheets );
+		self::assertArrayHasKey( 'etch-builders-custom-media', $stylesheets );
+		self::assertSame( 'Custom Media Definitions', $stylesheets['etch-builders-custom-media']['name'] );
+		self::assertSame( '@custom-media', $stylesheets['etch-builders-custom-media']['type'] );
+		self::assertSame( "@custom-media --tablet (min-width: 768px);\n", $stylesheets['etch-builders-custom-media']['css'] );
+		self::assertContains( 'tablet', Stylesheet::declared_custom_media_names() );
+	}
+
+	public function test_register_custom_media_rejects_invalid_inputs(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'Custom media name must match /^[A-Za-z0-9_-]+$/.' );
+
+		Stylesheet::register_custom_media( 'tablet;body', '(min-width: 768px)' );
+	}
+
+	public function test_sync_custom_media_definitions_prunes_builder_owned_entry_when_empty(): void {
+		Environment::reset();
+		$storage = $this->storage();
+		Stylesheet::reset_custom_media();
+		$storage->set(
+			'etch_global_stylesheets',
+			array(
+				'default'                    => array(
+					'name' => 'Main',
+					'css'  => 'body { color: black; }',
+					'type' => 'default',
+				),
+				'etch-builders-custom-media' => array(
+					'name' => 'Custom Media Definitions',
+					'css'  => "@custom-media --tablet (min-width: 768px);\n",
+					'type' => '@custom-media',
+				),
+			)
+		);
+
+		$result = Stylesheet::sync_custom_media_definitions();
+
+		self::assertTrue( $result );
+		$stylesheets = $storage->get( 'etch_global_stylesheets', array() );
+		self::assertIsArray( $stylesheets );
+		self::assertArrayHasKey( 'default', $stylesheets );
+		self::assertArrayNotHasKey( 'etch-builders-custom-media', $stylesheets );
+	}
+
+	public function test_stylesheet_css_rejects_custom_media_declarations(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'Use Stylesheet::register_custom_media().' );
+
+		Stylesheet::new()
+			->id( 'bad-custom-media' )
+			->name( 'Bad Custom Media' )
+			->css( '@custom-media --tablet (min-width: 768px);' )
+			->register();
+	}
+
 	protected function tearDown(): void {
 		Environment::reset();
 		Stylesheet::reset_active_owner_keys();

@@ -170,7 +170,7 @@ final class BuilderPreviewStyleGuard {
 				foreach ( $names as $name ) {
 					if ( ! in_array( $name, $declared, true ) ) {
 						$errors[] = sprintf(
-							'Rule H: Style in %s uses @custom-media "--%s" which is not declared in any registered stylesheet. Use Stylesheet::register_custom_media().',
+							'Rule H: Style in %s uses @custom-media "--%s" which is not declared through Custom Media Definitions. Use Stylesheet::register_custom_media().',
 							$css_path,
 							$name
 						);
@@ -422,7 +422,7 @@ final class BuilderPreviewStyleGuard {
 			foreach ( $names as $name ) {
 				if ( ! in_array( $name, $declared, true ) ) {
 					$errors[] = sprintf(
-						'Rule H: Style "%s" uses @custom-media "--%s" which is not declared in any registered stylesheet. Use Stylesheet::register_custom_media().',
+						'Rule H: Style "%s" uses @custom-media "--%s" which is not declared through Custom Media Definitions. Use Stylesheet::register_custom_media().',
 						$style_id,
 						$name
 					);

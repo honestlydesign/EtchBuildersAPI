@@ -35,6 +35,31 @@ final class Stylesheet {
 	private const FRAGMENTS_OPTION_NAME = 'oh_my_id_etch_builder_stylesheet_fragments';
 
 	/**
+	 * Builder-owned Etch stylesheet ID for custom media definitions.
+	 */
+	private const CUSTOM_MEDIA_STYLESHEET_ID = 'etch-builders-custom-media';
+
+	/**
+	 * Display name Etch uses for the custom media definitions registry.
+	 */
+	private const CUSTOM_MEDIA_STYLESHEET_NAME = 'Custom Media Definitions';
+
+	/**
+	 * Etch stylesheet type that the runtime scans for @custom-media definitions.
+	 */
+	private const CUSTOM_MEDIA_STYLESHEET_TYPE = '@custom-media';
+
+	/**
+	 * OhMyIDEtch option name used for builder-owned custom media hash.
+	 */
+	private const CUSTOM_MEDIA_HASH_OPTION_NAME = 'oh_my_id_etch_builder_custom_media_hash';
+
+	/**
+	 * @custom-media declaration pattern.
+	 */
+	private const CUSTOM_MEDIA_DECLARATION_PATTERN = '/@custom-media\s+--[A-Za-z0-9_-]+\s+[^;]+;/';
+
+	/**
 	 * Stylesheet owners seen during the current registration pass.
 	 *
 	 * @var array<string, true>
@@ -381,23 +406,76 @@ final class Stylesheet {
 	/**
 	 * Declare an @custom-media macro.
 	 *
-	 * The name (without leading --) is registered for reference validation.
-	 * Styles that use (--name) are checked against this registry by Rule H.
-	 *
-	 * Note: this does NOT persist to etch_global_stylesheets. Authors declaring
-	 * custom media for the Etch runtime should also write the @custom-media line
-	 * into a stylesheet fragment via stylesheet(). This method only feeds the
-	 * build-time validator registry.
+	 * The name (without leading --) is registered for reference validation and
+	 * persisted to Etch's "Custom Media Definitions" stylesheet type.
 	 *
 	 * @param string $name  Macro name without leading dashes (e.g. 'tablet').
 	 * @param string $query Media query string (e.g. '(min-width: 768px)').
+	 * @return bool|RegistrationResult
+	 * @throws InvalidArgumentException When the name or query is invalid.
 	 */
-	public static function register_custom_media( string $name, string $query ): void {
-		$name = trim( $name, "-- \t\n\r\0\x0B" );
-		if ( '' === $name ) {
-			return;
-		}
+	public static function register_custom_media( string $name, string $query ): bool|RegistrationResult {
+		$name  = self::normalize_custom_media_name( $name );
+		$query = self::normalize_custom_media_query( $query );
+
 		self::$custom_media[ $name ] = $query;
+
+		return self::sync_custom_media_definitions();
+	}
+
+	/**
+	 * Persist the request-local custom media registry to Etch's custom-media stylesheet type.
+	 *
+	 * Removes the builder-owned definitions entry when no code-owned custom
+	 * media macros are registered in the current pass.
+	 *
+	 * @return bool|RegistrationResult
+	 */
+	public static function sync_custom_media_definitions(): bool|RegistrationResult {
+		$current_stylesheets = self::stylesheets();
+		$next_stylesheets    = $current_stylesheets;
+
+		if ( array() === self::$custom_media ) {
+			unset( $next_stylesheets[ self::CUSTOM_MEDIA_STYLESHEET_ID ] );
+
+			if ( ! self::update_option_if_changed( self::STYLESHEETS_OPTION_NAME, $current_stylesheets, $next_stylesheets ) ) {
+				return RegistrationResult::error(
+					'custom_media_update_failed',
+					'Custom Media Definitions option could not be updated.'
+				);
+			}
+
+			if ( ! Environment::storage()->delete( self::CUSTOM_MEDIA_HASH_OPTION_NAME ) ) {
+				return RegistrationResult::error(
+					'custom_media_update_failed',
+					'Custom Media Definitions option could not be updated.'
+				);
+			}
+
+			return true;
+		}
+
+		$payload = self::custom_media_payload();
+
+		$next_stylesheets[ self::CUSTOM_MEDIA_STYLESHEET_ID ] = $payload;
+
+		if ( ! self::update_option_if_changed( self::STYLESHEETS_OPTION_NAME, $current_stylesheets, $next_stylesheets ) ) {
+			return RegistrationResult::error(
+				'custom_media_update_failed',
+				'Custom Media Definitions option could not be updated.'
+			);
+		}
+
+		if ( ! Environment::storage()->set( self::CUSTOM_MEDIA_HASH_OPTION_NAME, self::hash_payload( $payload ) ) ) {
+			self::update_option_if_changed( self::STYLESHEETS_OPTION_NAME, $next_stylesheets, $current_stylesheets );
+
+			return RegistrationResult::error(
+				'custom_media_update_failed',
+				'Custom Media Definitions option could not be updated.'
+			);
+		}
+
+		return true;
 	}
 
 	/**
@@ -571,7 +649,79 @@ final class Stylesheet {
 			throw new InvalidArgumentException( 'Stylesheet css is required.' );
 		}
 
+		self::assert_no_custom_media_declarations( $this->css );
+
 		return $this->css;
+	}
+
+	/**
+	 * Normalize a custom media macro name.
+	 *
+	 * @param string $name Macro name with or without leading dashes.
+	 */
+	private static function normalize_custom_media_name( string $name ): string {
+		$name = trim( $name, "-- \t\n\r\0\x0B" );
+
+		if ( '' === $name ) {
+			throw new InvalidArgumentException( 'Custom media name must be non-empty.' );
+		}
+
+		if ( 1 !== preg_match( '/^[A-Za-z0-9_-]+$/', $name ) ) {
+			throw new InvalidArgumentException( 'Custom media name must match /^[A-Za-z0-9_-]+$/.' );
+		}
+
+		return $name;
+	}
+
+	/**
+	 * Normalize a custom media query string.
+	 *
+	 * @param string $query Media query string.
+	 */
+	private static function normalize_custom_media_query( string $query ): string {
+		$query = trim( $query );
+
+		if ( '' === $query ) {
+			throw new InvalidArgumentException( 'Custom media query must be non-empty.' );
+		}
+
+		if ( str_contains( $query, ';' ) ) {
+			throw new InvalidArgumentException( 'Custom media query must not contain semicolons.' );
+		}
+
+		return $query;
+	}
+
+	/**
+	 * Ensure normal stylesheets do not contain custom media declarations.
+	 *
+	 * @param string $css Stylesheet CSS.
+	 */
+	private static function assert_no_custom_media_declarations( string $css ): void {
+		if ( 1 === preg_match( self::CUSTOM_MEDIA_DECLARATION_PATTERN, $css ) ) {
+			throw new InvalidArgumentException( 'Do not declare @custom-media in a normal stylesheet. Use Stylesheet::register_custom_media().' );
+		}
+	}
+
+	/**
+	 * Build the Etch custom media definitions stylesheet payload.
+	 *
+	 * @return array{name: string, css: string, type: string}
+	 */
+	private static function custom_media_payload(): array {
+		$definitions = self::$custom_media;
+		ksort( $definitions );
+
+		$lines = array();
+		foreach ( $definitions as $name => $query ) {
+			$lines[] = sprintf( '@custom-media --%s %s;', $name, $query );
+		}
+
+		return array(
+			'name' => self::CUSTOM_MEDIA_STYLESHEET_NAME,
+			'css'  => implode( "\n", $lines ) . "\n",
+			'type' => self::CUSTOM_MEDIA_STYLESHEET_TYPE,
+		);
 	}
 
 	/**
@@ -770,7 +920,7 @@ final class Stylesheet {
 	/**
 	 * Hash a stylesheet payload.
 	 *
-	 * @param array{name: string, css: string} $payload Stylesheet payload.
+	 * @param array{name: string, css: string, type?: string} $payload Stylesheet payload.
 	 */
 	private static function hash_payload( array $payload ): string {
 		$encoded_payload = Json::encode( $payload );

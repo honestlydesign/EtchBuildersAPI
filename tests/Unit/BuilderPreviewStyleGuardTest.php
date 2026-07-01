@@ -201,6 +201,9 @@ final class BuilderPreviewStyleGuardTest extends TestCase {
 		foreach ( $errors as $error ) {
 			if ( str_contains( $error, 'Rule H' ) && str_contains( $error, '--mobile' ) && str_contains( $error, 'hero-style' ) ) {
 				$found = true;
+				self::assertStringContainsString( 'Stylesheet::register_custom_media()', $error );
+				self::assertStringContainsString( 'Custom Media Definitions', $error );
+				self::assertStringNotContainsString( 'registered stylesheet', $error );
 				break;
 			}
 		}
