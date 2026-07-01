@@ -50,9 +50,9 @@ final class Stylesheet {
 	private const CUSTOM_MEDIA_STYLESHEET_TYPE = '@custom-media';
 
 	/**
-	 * OhMyIDEtch option name used for builder-owned custom media hash.
+	 * Legacy OhMyIDEtch option name used by v1.1.7 for builder-owned custom media hash.
 	 */
-	private const CUSTOM_MEDIA_HASH_OPTION_NAME = 'oh_my_id_etch_builder_custom_media_hash';
+	private const LEGACY_CUSTOM_MEDIA_HASH_OPTION_NAME = 'oh_my_id_etch_builder_custom_media_hash';
 
 	/**
 	 * @custom-media declaration pattern.
@@ -268,41 +268,10 @@ final class Stylesheet {
 			return true;
 		}
 
-		$stylesheet          = $this->to_array();
-		$id                  = (string) $this->id;
-		$current             = self::stylesheets();
-		$builder_hashes      = self::builder_hashes();
-		$existing_stylesheet = $current[ $id ] ?? null;
-
-		if (
-			array_key_exists( $id, $current )
-			&& ! $this->overwrite
-			&& ! self::is_builder_owned_and_unchanged( $existing_stylesheet, $builder_hashes[ $id ] ?? null )
-		) {
-			return true;
-		}
-
-		$next_stylesheets        = $current;
-		$next_hashes             = $builder_hashes;
-		$next_stylesheets[ $id ] = $stylesheet;
-		$next_hashes[ $id ]      = self::hash_payload( $stylesheet );
-
-		$stylesheets_updated = self::update_option_if_changed( self::STYLESHEETS_OPTION_NAME, $current, $next_stylesheets );
-		if ( ! $stylesheets_updated ) {
-			return RegistrationResult::error(
-				'stylesheet_update_failed',
-				'Stylesheet option could not be updated.'
-			);
-		}
-
-		$hashes_updated = self::update_option_if_changed( self::HASHES_OPTION_NAME, $builder_hashes, $next_hashes );
-		if ( $hashes_updated ) {
-			return true;
-		}
-
-		self::update_option_if_changed( self::STYLESHEETS_OPTION_NAME, $next_stylesheets, $current );
-
-		return RegistrationResult::error(
+		return self::register_builder_stylesheet_payload(
+			(string) $this->id,
+			$this->to_array(),
+			$this->overwrite,
 			'stylesheet_update_failed',
 			'Stylesheet option could not be updated.'
 		);
@@ -432,48 +401,38 @@ final class Stylesheet {
 	 * @return bool|RegistrationResult
 	 */
 	public static function sync_custom_media_definitions(): bool|RegistrationResult {
-		$current_stylesheets = self::stylesheets();
-		$next_stylesheets    = $current_stylesheets;
-
 		if ( array() === self::$custom_media ) {
-			unset( $next_stylesheets[ self::CUSTOM_MEDIA_STYLESHEET_ID ] );
+			$result = self::remove_builder_stylesheet_payload(
+				self::CUSTOM_MEDIA_STYLESHEET_ID,
+				'custom_media_update_failed',
+				'Custom Media Definitions option could not be updated.',
+				self::custom_media_ownership_hash()
+			);
 
-			if ( ! self::update_option_if_changed( self::STYLESHEETS_OPTION_NAME, $current_stylesheets, $next_stylesheets ) ) {
-				return RegistrationResult::error(
-					'custom_media_update_failed',
-					'Custom Media Definitions option could not be updated.'
-				);
+			if ( $result instanceof RegistrationResult ) {
+				return $result;
 			}
 
-			if ( ! Environment::storage()->delete( self::CUSTOM_MEDIA_HASH_OPTION_NAME ) ) {
-				return RegistrationResult::error(
-					'custom_media_update_failed',
-					'Custom Media Definitions option could not be updated.'
-				);
-			}
+			self::delete_legacy_custom_media_hash();
 
 			return true;
 		}
 
-		$payload = self::custom_media_payload();
+		$result = self::register_builder_stylesheet_payload(
+			self::CUSTOM_MEDIA_STYLESHEET_ID,
+			self::custom_media_payload(),
+			false,
+			'custom_media_update_failed',
+			'Custom Media Definitions option could not be updated.',
+			true,
+			self::custom_media_ownership_hash()
+		);
 
-		$next_stylesheets[ self::CUSTOM_MEDIA_STYLESHEET_ID ] = $payload;
-
-		if ( ! self::update_option_if_changed( self::STYLESHEETS_OPTION_NAME, $current_stylesheets, $next_stylesheets ) ) {
-			return RegistrationResult::error(
-				'custom_media_update_failed',
-				'Custom Media Definitions option could not be updated.'
-			);
+		if ( $result instanceof RegistrationResult ) {
+			return $result;
 		}
 
-		if ( ! Environment::storage()->set( self::CUSTOM_MEDIA_HASH_OPTION_NAME, self::hash_payload( $payload ) ) ) {
-			self::update_option_if_changed( self::STYLESHEETS_OPTION_NAME, $next_stylesheets, $current_stylesheets );
-
-			return RegistrationResult::error(
-				'custom_media_update_failed',
-				'Custom Media Definitions option could not be updated.'
-			);
-		}
+		self::delete_legacy_custom_media_hash();
 
 		return true;
 	}
@@ -685,8 +644,11 @@ final class Stylesheet {
 			throw new InvalidArgumentException( 'Custom media query must be non-empty.' );
 		}
 
-		if ( str_contains( $query, ';' ) ) {
-			throw new InvalidArgumentException( 'Custom media query must not contain semicolons.' );
+		if (
+			str_contains( strtolower( $query ), '@custom-media' )
+			|| 1 === preg_match( '/[;{}\x00-\x1F\x7F]/', $query )
+		) {
+			throw new InvalidArgumentException( 'Custom media query must be a single-line media query without declaration syntax.' );
 		}
 
 		return $query;
@@ -864,6 +826,128 @@ final class Stylesheet {
 	}
 
 	/**
+	 * Register a builder-owned Etch stylesheet payload.
+	 *
+	 * @param string                              $id Stylesheet ID.
+	 * @param array{name: string, css: string, type?: string} $payload Stylesheet payload.
+	 * @param bool                                $overwrite Whether user-owned payloads may be overwritten.
+	 * @param string                              $error_code RegistrationResult error code.
+	 * @param string                              $error_message RegistrationResult error message.
+	 * @param bool                                $clear_stale_hash_on_conflict Whether to clear a stale builder hash when preserving user edits.
+	 * @param string|null                         $existing_ownership_hash Existing hash, including one-time legacy migrations.
+	 */
+	private static function register_builder_stylesheet_payload(
+		string $id,
+		array $payload,
+		bool $overwrite,
+		string $error_code,
+		string $error_message,
+		bool $clear_stale_hash_on_conflict = false,
+		?string $existing_ownership_hash = null
+	): bool|RegistrationResult {
+		$current             = self::stylesheets();
+		$builder_hashes      = self::builder_hashes();
+		$existing_stylesheet = $current[ $id ] ?? null;
+		$ownership_hash      = $existing_ownership_hash ?? $builder_hashes[ $id ] ?? null;
+
+		if (
+			array_key_exists( $id, $current )
+			&& ! $overwrite
+			&& ! self::is_builder_owned_and_unchanged( $existing_stylesheet, $ownership_hash )
+		) {
+			if ( $clear_stale_hash_on_conflict && array_key_exists( $id, $builder_hashes ) ) {
+				$next_hashes = $builder_hashes;
+				unset( $next_hashes[ $id ] );
+
+				if ( ! self::update_option_if_changed( self::HASHES_OPTION_NAME, $builder_hashes, $next_hashes ) ) {
+					return RegistrationResult::error( $error_code, $error_message );
+				}
+			}
+
+			return true;
+		}
+
+		$next_stylesheets        = $current;
+		$next_hashes             = $builder_hashes;
+		$next_stylesheets[ $id ] = $payload;
+		$next_hashes[ $id ]      = self::hash_payload( $payload );
+
+		$stylesheets_updated = self::update_option_if_changed( self::STYLESHEETS_OPTION_NAME, $current, $next_stylesheets );
+		if ( ! $stylesheets_updated ) {
+			return RegistrationResult::error( $error_code, $error_message );
+		}
+
+		$hashes_updated = self::update_option_if_changed( self::HASHES_OPTION_NAME, $builder_hashes, $next_hashes );
+		if ( $hashes_updated ) {
+			return true;
+		}
+
+		self::update_option_if_changed( self::STYLESHEETS_OPTION_NAME, $next_stylesheets, $current );
+
+		return RegistrationResult::error( $error_code, $error_message );
+	}
+
+	/**
+	 * Remove a builder-owned Etch stylesheet payload when ownership is unchanged.
+	 *
+	 * @param string      $id Stylesheet ID.
+	 * @param string      $error_code RegistrationResult error code.
+	 * @param string      $error_message RegistrationResult error message.
+	 * @param string|null $existing_ownership_hash Existing hash, including one-time legacy migrations.
+	 */
+	private static function remove_builder_stylesheet_payload(
+		string $id,
+		string $error_code,
+		string $error_message,
+		?string $existing_ownership_hash = null
+	): bool|RegistrationResult {
+		$current             = self::stylesheets();
+		$builder_hashes      = self::builder_hashes();
+		$existing_stylesheet = $current[ $id ] ?? null;
+		$ownership_hash      = $existing_ownership_hash ?? $builder_hashes[ $id ] ?? null;
+
+		if (
+			array_key_exists( $id, $current )
+			&& ! self::is_builder_owned_and_unchanged( $existing_stylesheet, $ownership_hash )
+		) {
+			if ( ! array_key_exists( $id, $builder_hashes ) ) {
+				return true;
+			}
+
+			$next_hashes = $builder_hashes;
+			unset( $next_hashes[ $id ] );
+
+			if ( ! self::update_option_if_changed( self::HASHES_OPTION_NAME, $builder_hashes, $next_hashes ) ) {
+				return RegistrationResult::error( $error_code, $error_message );
+			}
+
+			return true;
+		}
+
+		if ( ! array_key_exists( $id, $current ) && ! array_key_exists( $id, $builder_hashes ) ) {
+			return true;
+		}
+
+		$next_stylesheets = $current;
+		$next_hashes      = $builder_hashes;
+		unset( $next_stylesheets[ $id ], $next_hashes[ $id ] );
+
+		$stylesheets_updated = self::update_option_if_changed( self::STYLESHEETS_OPTION_NAME, $current, $next_stylesheets );
+		if ( ! $stylesheets_updated ) {
+			return RegistrationResult::error( $error_code, $error_message );
+		}
+
+		$hashes_updated = self::update_option_if_changed( self::HASHES_OPTION_NAME, $builder_hashes, $next_hashes );
+		if ( $hashes_updated ) {
+			return true;
+		}
+
+		self::update_option_if_changed( self::STYLESHEETS_OPTION_NAME, $next_stylesheets, $current );
+
+		return RegistrationResult::error( $error_code, $error_message );
+	}
+
+	/**
 	 * Determine whether a stylesheet is builder-owned and unchanged.
 	 *
 	 * @param mixed $stylesheet Existing stylesheet payload.
@@ -886,7 +970,7 @@ final class Stylesheet {
 	 * Normalize persisted stylesheet data to Etch's schema.
 	 *
 	 * @param array<mixed> $stylesheet Persisted stylesheet data.
-	 * @return array{name: string, css: string}|null
+	 * @return array{name: string, css: string, type?: string}|null
 	 */
 	private static function normalize_stylesheet_payload( array $stylesheet ): ?array {
 		$name = $stylesheet['name'] ?? null;
@@ -896,10 +980,37 @@ final class Stylesheet {
 			return null;
 		}
 
-		return array(
+		$payload = array(
 			'name' => $name,
 			'css'  => $css,
 		);
+
+		if ( isset( $stylesheet['type'] ) && is_string( $stylesheet['type'] ) ) {
+			$payload['type'] = $stylesheet['type'];
+		}
+
+		return $payload;
+	}
+
+	/**
+	 * Return the canonical custom-media ownership hash with a one-time legacy fallback.
+	 */
+	private static function custom_media_ownership_hash(): ?string {
+		$hashes = self::builder_hashes();
+		if ( isset( $hashes[ self::CUSTOM_MEDIA_STYLESHEET_ID ] ) ) {
+			return $hashes[ self::CUSTOM_MEDIA_STYLESHEET_ID ];
+		}
+
+		$legacy_hash = Environment::storage()->get( self::LEGACY_CUSTOM_MEDIA_HASH_OPTION_NAME, null );
+
+		return is_string( $legacy_hash ) && '' !== $legacy_hash ? $legacy_hash : null;
+	}
+
+	/**
+	 * Delete the v1.1.7 custom-media ownership option after canonical sync succeeds.
+	 */
+	private static function delete_legacy_custom_media_hash(): void {
+		Environment::storage()->delete( self::LEGACY_CUSTOM_MEDIA_HASH_OPTION_NAME );
 	}
 
 	/**

@@ -12,6 +12,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit;
 use HonestlyDesign\EtchBuilders\Environment;
 use HonestlyDesign\EtchBuilders\Stylesheet;
 use HonestlyDesign\EtchBuilders\StylesheetReference;
+use HonestlyDesign\EtchBuilders\Support\Json;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -140,6 +141,47 @@ final class StylesheetTest extends TestCase {
 		self::assertSame( '@custom-media', $stylesheets['etch-builders-custom-media']['type'] );
 		self::assertSame( "@custom-media --tablet (min-width: 768px);\n", $stylesheets['etch-builders-custom-media']['css'] );
 		self::assertContains( 'tablet', Stylesheet::declared_custom_media_names() );
+
+		$hashes = $storage->get( 'oh_my_id_etch_builder_stylesheets', array() );
+		self::assertIsArray( $hashes );
+		self::assertArrayHasKey( 'etch-builders-custom-media', $hashes );
+		self::assertSame(
+			$this->hash_payload( $stylesheets['etch-builders-custom-media'] ),
+			$hashes['etch-builders-custom-media']
+		);
+		self::assertNull( $storage->get( 'oh_my_id_etch_builder_custom_media_hash', null ) );
+	}
+
+	public function test_register_custom_media_updates_builder_owned_custom_media_definitions(): void {
+		Environment::reset();
+		$storage = $this->storage();
+		Stylesheet::reset_custom_media();
+
+		Stylesheet::register_custom_media( 'tablet', '(min-width: 768px)' );
+		$first_stylesheets = $storage->get( 'etch_global_stylesheets', array() );
+		$first_hashes      = $storage->get( 'oh_my_id_etch_builder_stylesheets', array() );
+		self::assertIsArray( $first_stylesheets );
+		self::assertIsArray( $first_hashes );
+
+		$result = Stylesheet::register_custom_media( 'desktop', '(min-width: 1280px)' );
+
+		self::assertTrue( $result );
+		$next_stylesheets = $storage->get( 'etch_global_stylesheets', array() );
+		$next_hashes      = $storage->get( 'oh_my_id_etch_builder_stylesheets', array() );
+		self::assertIsArray( $next_stylesheets );
+		self::assertIsArray( $next_hashes );
+		self::assertSame(
+			"@custom-media --desktop (min-width: 1280px);\n@custom-media --tablet (min-width: 768px);\n",
+			$next_stylesheets['etch-builders-custom-media']['css']
+		);
+		self::assertNotSame(
+			$first_hashes['etch-builders-custom-media'],
+			$next_hashes['etch-builders-custom-media']
+		);
+		self::assertSame(
+			$this->hash_payload( $next_stylesheets['etch-builders-custom-media'] ),
+			$next_hashes['etch-builders-custom-media']
+		);
 	}
 
 	public function test_register_custom_media_rejects_invalid_inputs(): void {
@@ -147,6 +189,16 @@ final class StylesheetTest extends TestCase {
 		$this->expectExceptionMessage( 'Custom media name must match /^[A-Za-z0-9_-]+$/.' );
 
 		Stylesheet::register_custom_media( 'tablet;body', '(min-width: 768px)' );
+	}
+
+	/**
+	 * @dataProvider invalid_custom_media_query_provider
+	 */
+	public function test_register_custom_media_rejects_invalid_queries( string $query ): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'Custom media query must be a single-line media query without declaration syntax.' );
+
+		Stylesheet::register_custom_media( 'tablet', $query );
 	}
 
 	public function test_sync_custom_media_definitions_prunes_builder_owned_entry_when_empty(): void {
@@ -168,6 +220,19 @@ final class StylesheetTest extends TestCase {
 				),
 			)
 		);
+		$storage->set(
+			'oh_my_id_etch_builder_stylesheets',
+			array(
+				'etch-builders-custom-media' => $this->hash_payload(
+					array(
+						'name' => 'Custom Media Definitions',
+						'css'  => "@custom-media --tablet (min-width: 768px);\n",
+						'type' => '@custom-media',
+					)
+				),
+			)
+		);
+		$storage->set( 'oh_my_id_etch_builder_custom_media_hash', 'legacy-stale-hash' );
 
 		$result = Stylesheet::sync_custom_media_definitions();
 
@@ -176,6 +241,51 @@ final class StylesheetTest extends TestCase {
 		self::assertIsArray( $stylesheets );
 		self::assertArrayHasKey( 'default', $stylesheets );
 		self::assertArrayNotHasKey( 'etch-builders-custom-media', $stylesheets );
+
+		$hashes = $storage->get( 'oh_my_id_etch_builder_stylesheets', array() );
+		self::assertIsArray( $hashes );
+		self::assertArrayNotHasKey( 'etch-builders-custom-media', $hashes );
+		self::assertNull( $storage->get( 'oh_my_id_etch_builder_custom_media_hash', null ) );
+	}
+
+	public function test_sync_custom_media_definitions_preserves_user_modified_entry_when_empty(): void {
+		Environment::reset();
+		$storage = $this->storage();
+		Stylesheet::reset_custom_media();
+		$builder_payload = array(
+			'name' => 'Custom Media Definitions',
+			'css'  => "@custom-media --tablet (min-width: 768px);\n",
+			'type' => '@custom-media',
+		);
+		$user_payload    = array(
+			'name' => 'Custom Media Definitions',
+			'css'  => "@custom-media --desktop (min-width: 1280px);\n",
+			'type' => '@custom-media',
+		);
+		$storage->set(
+			'etch_global_stylesheets',
+			array(
+				'etch-builders-custom-media' => $user_payload,
+			)
+		);
+		$storage->set(
+			'oh_my_id_etch_builder_stylesheets',
+			array(
+				'etch-builders-custom-media' => $this->hash_payload( $builder_payload ),
+			)
+		);
+
+		$result = Stylesheet::sync_custom_media_definitions();
+
+		self::assertTrue( $result );
+		$stylesheets = $storage->get( 'etch_global_stylesheets', array() );
+		self::assertIsArray( $stylesheets );
+		self::assertArrayHasKey( 'etch-builders-custom-media', $stylesheets );
+		self::assertSame( $user_payload, $stylesheets['etch-builders-custom-media'] );
+
+		$hashes = $storage->get( 'oh_my_id_etch_builder_stylesheets', array() );
+		self::assertIsArray( $hashes );
+		self::assertArrayNotHasKey( 'etch-builders-custom-media', $hashes );
 	}
 
 	public function test_stylesheet_css_rejects_custom_media_declarations(): void {
@@ -194,5 +304,32 @@ final class StylesheetTest extends TestCase {
 		Stylesheet::reset_active_owner_keys();
 		Stylesheet::reset_custom_media();
 		parent::tearDown();
+	}
+
+	/**
+	 * @return array<string, array{string}>
+	 */
+	public static function invalid_custom_media_query_provider(): array {
+		return array(
+			'semicolon'            => array( '(min-width: 768px);' ),
+			'braces'               => array( '(min-width: 768px) { color: red; }' ),
+			'newline'              => array( "(min-width: 768px)\n@media all" ),
+			'control-character'    => array( "(min-width: 768px)\t" . chr( 7 ) ),
+			'embedded-declaration' => array( '@custom-media --bad (min-width: 1px)' ),
+		);
+	}
+
+	/**
+	 * @param array{name: string, css: string, type?: string} $payload Stylesheet payload.
+	 */
+	private function hash_payload( array $payload ): string {
+		$encoded_payload = Json::encode( $payload );
+
+		if ( '' === $encoded_payload ) {
+			// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_serialize -- Mirrors package hash fallback.
+			$encoded_payload = serialize( $payload );
+		}
+
+		return hash( 'sha256', $encoded_payload );
 	}
 }
