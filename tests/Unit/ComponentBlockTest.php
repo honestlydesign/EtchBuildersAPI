@@ -10,6 +10,8 @@ declare( strict_types=1 );
 namespace HonestlyDesign\EtchBuilders\Tests\Unit;
 
 use HonestlyDesign\EtchBuilders\ClassStyleRegistry;
+use HonestlyDesign\EtchBuilders\ClassStyleReference;
+use HonestlyDesign\EtchBuilders\ClassStyleSet;
 use HonestlyDesign\EtchBuilders\Contracts\StorageInterface;
 use HonestlyDesign\EtchBuilders\Environment;
 use HonestlyDesign\EtchBuilders\EtchBlocks\ComponentBlock;
@@ -18,11 +20,76 @@ use HonestlyDesign\EtchBuilders\Support\NullAssetRegistry;
 use HonestlyDesign\EtchBuilders\Support\NullMode;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
+use ReflectionMethod;
 
 /**
  * Verifies ComponentBlock class prop linkage.
  */
 final class ComponentBlockTest extends TestCase {
+
+	public function test_class_prop_serializes_an_ordered_typed_set_without_style_or_storage_mutation(): void {
+		$style_state = Style::snapshot_state();
+		$persisted   = array(
+			'first-opaque-id'  => array(
+				'selector' => '.first-visual-class',
+				'type'     => 'class',
+			),
+			'second-opaque-id' => array(
+				'selector' => '.second-visual-class',
+				'type'     => 'class',
+			),
+		);
+		$storage     = new ComponentClassReadOnlyStorage( array( 'etch_styles' => $persisted ) );
+
+		try {
+			Style::reset();
+			Environment::configure( $storage, new NullMode(), new NullAssetRegistry() );
+			ClassStyleRegistry::reset_cache();
+
+			$first   = ClassStyleReference::registered( 'first-opaque-id' );
+			$second  = ClassStyleReference::registered( 'second-opaque-id' );
+			$classes = ClassStyleSet::of( $second, $first );
+			$before  = Style::snapshot_state();
+			$block   = ComponentBlock::new()
+				->ref( 1 )
+				->class_prop( 'classes', $classes )
+				->to_block();
+
+			$attrs = $this->extract_block_attrs( $block->to_string() );
+
+			self::assertSame( 'second-opaque-id first-opaque-id', $attrs['attributes']['classes'] );
+			self::assertSame( $before, Style::snapshot_state() );
+			self::assertSame( $persisted, $storage->get( 'etch_styles' ) );
+			self::assertSame( 0, $storage->set_calls );
+			self::assertSame( 0, $storage->delete_calls );
+		} finally {
+			ClassStyleRegistry::reset_cache();
+			Environment::reset();
+			Style::restore_state( $style_state );
+		}
+	}
+
+	public function test_class_prop_none_writes_an_explicit_empty_override(): void {
+		$block = ComponentBlock::new()
+			->ref( 1 )
+			->class_prop( 'classes', ClassStyleSet::none() )
+			->to_block();
+
+		$attrs = $this->extract_block_attrs( $block->to_string() );
+
+		self::assertArrayHasKey( 'classes', $attrs['attributes'] );
+		self::assertSame( '', $attrs['attributes']['classes'] );
+	}
+
+	public function test_class_prop_is_typed_and_raw_prop_class_is_deprecated(): void {
+		$typed_method = new ReflectionMethod( ComponentBlock::class, 'class_prop' );
+		$raw_method   = new ReflectionMethod( ComponentBlock::class, 'prop_class' );
+		$parameters   = $typed_method->getParameters();
+
+		self::assertCount( 2, $parameters );
+		self::assertSame( ClassStyleSet::class, (string) $parameters[1]->getType() );
+		self::assertStringContainsString( '@deprecated', (string) $raw_method->getDocComment() );
+	}
 
 	public function test_prop_class_serializes_an_in_memory_opaque_style_id_without_mutating_style_state(): void {
 		$style_state = Style::snapshot_state();
@@ -184,12 +251,12 @@ final class ComponentBlockTest extends TestCase {
 
 			$block = ComponentBlock::new()
 				->ref( 1 )
-				->prop_class( 'classes', array( 'second-opaque-id', 'first-opaque-id' ) )
+				->prop_class( 'classes', array( 'second-opaque-id', 'first-opaque-id', 'second-opaque-id' ) )
 				->to_block();
 
 			$attrs = $this->extract_block_attrs( $block->to_string() );
 
-			self::assertSame( 'second-opaque-id first-opaque-id', $attrs['attributes']['classes'] );
+			self::assertSame( 'second-opaque-id first-opaque-id second-opaque-id', $attrs['attributes']['classes'] );
 		} finally {
 			ClassStyleRegistry::reset_cache();
 			Style::restore( $style_snapshot );
