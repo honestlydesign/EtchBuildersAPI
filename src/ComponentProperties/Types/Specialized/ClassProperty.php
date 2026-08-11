@@ -10,9 +10,9 @@ declare(strict_types=1);
 namespace HonestlyDesign\EtchBuilders\ComponentProperties\Types\Specialized;
 
 use InvalidArgumentException;
-use HonestlyDesign\EtchBuilders\Environment;
-use HonestlyDesign\EtchBuilders\Style;
+use HonestlyDesign\EtchBuilders\ClassStyleSet;
 use HonestlyDesign\EtchBuilders\ComponentProperties\Shared\BaseProperty;
+use HonestlyDesign\EtchBuilders\ComponentProperties\Shared\ClassPropertyDefaultValue;
 use HonestlyDesign\EtchBuilders\ComponentProperties\Shared\PropertyPrimitive;
 
 /**
@@ -27,9 +27,9 @@ use HonestlyDesign\EtchBuilders\ComponentProperties\Shared\PropertyPrimitive;
 final class ClassProperty extends BaseProperty {
 
 	/**
-	 * WordPress option name used by Etch styles.
+	 * Validated default and its exact identity proofs.
 	 */
-	private const STYLES_OPTION_NAME = 'etch_styles';
+	private ?ClassPropertyDefaultValue $class_default = null;
 
 	/**
 	 * Create a new class property builder.
@@ -47,29 +47,18 @@ final class ClassProperty extends BaseProperty {
 	 * @throws InvalidArgumentException When value is invalid.
 	 */
 	public function default( mixed $value ): self {
-		if ( ! is_array( $value ) ) {
-			throw new InvalidArgumentException( 'Class property default must be an array.' );
-		}
+		$this->set_class_default( ClassPropertyDefaultValue::from( $value ) );
+		return $this;
+	}
 
-		$style_ids = array_values( $value );
-		$validated = array();
-
-		foreach ( $style_ids as $style_id ) {
-			if ( ! is_string( $style_id ) ) {
-				throw new InvalidArgumentException( 'Class property default must contain only strings.' );
-			}
-
-			$normalized_style_id = trim( $style_id );
-			if ( '' === $normalized_style_id ) {
-				throw new InvalidArgumentException( 'Class property default cannot contain empty style IDs.' );
-			}
-
-			$this->assert_valid_class_style_id( $normalized_style_id );
-			$validated[] = $normalized_style_id;
-		}
-
-		$this->default_value = $validated;
-		$this->has_default   = true;
+	/**
+	 * Set a typed ordered class-style default.
+	 *
+	 * @param ClassStyleSet $classes Validated ordered class-style references.
+	 * @throws InvalidArgumentException When a reference no longer identifies the same style.
+	 */
+	public function default_classes( ClassStyleSet $classes ): self {
+		$this->set_class_default( ClassPropertyDefaultValue::from( $classes ) );
 		return $this;
 	}
 
@@ -80,6 +69,8 @@ final class ClassProperty extends BaseProperty {
 	 * @throws InvalidArgumentException When style ID is invalid.
 	 */
 	public function default_style_id( string $style_id ): self {
+		$this->assert_class_default_is_current();
+
 		$style_ids = array();
 
 		if ( $this->has_default && is_array( $this->default_value ) ) {
@@ -112,6 +103,16 @@ final class ClassProperty extends BaseProperty {
 	}
 
 	/**
+	 * Convert the property to an Etch schema after revalidating style identity.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public function to_array(): array {
+		$this->assert_class_default_is_current();
+		return parent::to_array();
+	}
+
+	/**
 	 * Returns the class specialized discriminator.
 	 */
 	protected function get_specialized(): string {
@@ -128,44 +129,22 @@ final class ClassProperty extends BaseProperty {
 	}
 
 	/**
-	 * Validate style ID exists and is class style type.
+	 * Store a validated class default and its unchanged opaque IDs.
 	 *
-	 * @param string $style_id Style ID.
-	 * @throws InvalidArgumentException When style is unknown or not class type.
+	 * @param ClassPropertyDefaultValue $default Validated default value.
 	 */
-	private function assert_valid_class_style_id( string $style_id ): void {
-		$styles = $this->load_registered_styles();
-
-		if ( ! array_key_exists( $style_id, $styles ) ) {
-			// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
-			throw new InvalidArgumentException( 'Unknown class style ID: ' . $style_id );
-		}
-
-		$style = $styles[ $style_id ];
-		if ( ! is_array( $style ) || ! isset( $style['type'] ) || ! is_string( $style['type'] ) || 'class' !== $style['type'] ) {
-			// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
-			throw new InvalidArgumentException( 'Class property style IDs must reference styles with type "class": ' . $style_id );
-		}
+	private function set_class_default( ClassPropertyDefaultValue $default ): void {
+		$this->class_default = $default;
+		$this->default_value = $default->ids();
+		$this->has_default   = true;
 	}
 
 	/**
-	 * Load Etch style registry from WordPress option storage.
-	 *
-	 * @return array<string, mixed>
+	 * Revalidate all remembered references at the final serialization boundary.
 	 */
-	private function load_registered_styles(): array {
-		$styles = array();
-
-		$persisted_styles = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
-		if ( is_array( $persisted_styles ) ) {
-			$styles = $persisted_styles;
+	private function assert_class_default_is_current(): void {
+		if ( null !== $this->class_default ) {
+			$this->class_default->assert_current();
 		}
-
-		$in_memory_styles = Style::registered_styles();
-		foreach ( $in_memory_styles as $style_id => $style ) {
-			$styles[ $style_id ] = $style;
-		}
-
-		return $styles;
 	}
 }

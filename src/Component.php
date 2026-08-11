@@ -11,6 +11,7 @@ namespace HonestlyDesign\EtchBuilders;
 
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\ComponentProperties\Contracts\ComponentPropertyInterface;
+use HonestlyDesign\EtchBuilders\ComponentProperties\Shared\PropertySerializationTransaction;
 use HonestlyDesign\EtchBuilders\Environment;
 use HonestlyDesign\EtchBuilders\Support\BlocksInputPathGuard;
 use RuntimeException;
@@ -229,13 +230,17 @@ final class Component {
 	 * @return array<int, array<string, mixed>>
 	 */
 	public function get_properties(): array {
-		$properties = array();
+		return PropertySerializationTransaction::run(
+			function (): array {
+				$properties = array();
 
-		foreach ( $this->properties as $property ) {
-			$properties[] = $property->to_array();
-		}
+				foreach ( $this->properties as $property ) {
+					$properties[] = $property->to_array();
+				}
 
-		return $properties;
+				return $properties;
+			}
+		);
 	}
 
 	/**
