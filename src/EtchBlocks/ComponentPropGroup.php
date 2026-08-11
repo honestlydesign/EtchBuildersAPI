@@ -9,6 +9,8 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders\EtchBlocks;
 
+use HonestlyDesign\EtchBuilders\ClassStyleSet;
+
 /**
  * Builds group-shaped Etch component prop payloads.
  */
@@ -62,7 +64,20 @@ final class ComponentPropGroup implements ComponentPropValueInterface {
 	}
 
 	/**
+	 * Set a typed class value without flattening it before recursive encoding.
+	 *
+	 * @param string        $key Property key.
+	 * @param ClassStyleSet $classes Validated ordered class-style value.
+	 */
+	public function class_prop( string $key, ClassStyleSet $classes ): self {
+		$this->payload[ $key ] = $classes;
+		return $this;
+	}
+
+	/**
 	 * Set a class value.
+	 *
+	 * @deprecated Use class_prop() with ClassStyleSet for validated typed values.
 	 *
 	 * @param string             $key Property key.
 	 * @param array<int, string> $class_names Class names or style IDs.

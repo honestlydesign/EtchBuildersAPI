@@ -11,6 +11,7 @@ namespace HonestlyDesign\EtchBuilders\EtchBlocks;
 
 use InvalidArgumentException;
 use stdClass;
+use HonestlyDesign\EtchBuilders\ClassStyleSet;
 use HonestlyDesign\EtchBuilders\Support\Json;
 
 /**
@@ -164,6 +165,10 @@ final class ComponentPropValueEncoder {
 			return null === $payload_value ? '' : $payload_value;
 		}
 
+		if ( $payload_value instanceof ClassStyleSet ) {
+			return self::class( $payload_value->ids() );
+		}
+
 		if ( $payload_value instanceof ComponentPropGroup ) {
 			return self::normalize_group_payload( $payload_value->to_array(), false );
 		}
@@ -193,7 +198,7 @@ final class ComponentPropValueEncoder {
 		}
 
 		throw new InvalidArgumentException(
-			'Component group payload values must be strings, integers, floats, booleans, arrays, ComponentPropGroup, ComponentPropArray, ComponentPropRepeater, or stdClass.'
+			'Component group payload values must be strings, integers, floats, booleans, arrays, ClassStyleSet, ComponentPropGroup, ComponentPropArray, ComponentPropRepeater, or stdClass.'
 		);
 	}
 
