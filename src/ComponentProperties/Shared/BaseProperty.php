@@ -197,6 +197,17 @@ abstract class BaseProperty implements ComponentPropertyInterface {
 	 * @throws InvalidArgumentException When key derivation fails.
 	 */
 	public function to_array(): array {
+		return PropertySerializationTransaction::run(
+			fn (): array => $this->serialize_property()
+		);
+	}
+
+	/**
+	 * Build the property payload inside the active serialization transaction.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function serialize_property(): array {
 		$property = array(
 			'name' => $this->name,
 			'key'  => $this->key,

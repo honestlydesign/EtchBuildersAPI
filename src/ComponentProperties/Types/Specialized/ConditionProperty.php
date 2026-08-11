@@ -20,9 +20,9 @@ use HonestlyDesign\EtchBuilders\ComponentProperties\Shared\PropertyPrimitive;
 final class ConditionProperty extends BaseProperty {
 
 	/**
-	 * Nested child properties keyed by prop key.
+	 * Nested child properties in declaration order.
 	 *
-	 * @var array<string, ComponentPropertyInterface>
+	 * @var array<int, ComponentPropertyInterface>
 	 */
 	private array $properties = array();
 
@@ -57,8 +57,58 @@ final class ConditionProperty extends BaseProperty {
 	 * @param ComponentPropertyInterface $property Nested property builder.
 	 */
 	public function prop( ComponentPropertyInterface $property ): self {
-		$this->properties[ $property->get_key() ] = $property;
+		foreach ( $this->properties as $index => $existing ) {
+			if ( $existing->get_key() === $property->get_key() ) {
+				$this->properties[ $index ] = $property;
+				return $this;
+			}
+		}
+
+		$this->properties[] = $property;
 		return $this;
+	}
+
+	/**
+	 * Return child definitions that resolve transparently into the parent scope.
+	 *
+	 * @internal
+	 * @return array<int, ComponentPropertyInterface>
+	 */
+	public function nested_properties(): array {
+		return $this->properties;
+	}
+
+	/**
+	 * Reject ambiguous live definition keys throughout nested conditions.
+	 *
+	 * @internal
+	 */
+	public function assert_unique_nested_keys(): void {
+		$seen = array();
+
+		foreach ( $this->properties as $property ) {
+			$key = $property->get_key();
+			if ( isset( $seen[ $key ] ) ) {
+				throw new InvalidArgumentException(
+					sprintf( 'Condition property has duplicate current child property key "%s".', $key )
+				);
+			}
+
+			$seen[ $key ] = true;
+			if ( $property instanceof self ) {
+				$property->assert_unique_nested_keys();
+			}
+		}
+	}
+
+	/**
+	 * Convert the condition only after live child-key validation.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public function to_array(): array {
+		$this->assert_unique_nested_keys();
+		return parent::to_array();
 	}
 
 	/**
