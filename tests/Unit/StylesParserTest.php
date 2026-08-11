@@ -149,6 +149,19 @@ final class StylesParserTest extends TestCase {
 		);
 	}
 
+	public function test_parser_rejects_duplicate_legacy_comment_id_within_the_same_file(): void {
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'Style ID `shared-style-id`' );
+		$this->expectExceptionMessage( 'selector `.first-card`' );
+		$this->expectExceptionMessage( 'selector `.second-card`' );
+
+		StylesParser::new(
+			$this->write_temp_css(
+				'/* shared-style-id */ .first-card { color: red; } /* shared-style-id */ .second-card { color: blue; }'
+			)
+		);
+	}
+
 	public function test_parser_generates_id_when_no_legacy_comment_is_present(): void {
 		$parser = StylesParser::new(
 			$this->write_temp_css( '.comment-free-card:hover { color: red; }' )

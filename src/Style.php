@@ -44,6 +44,14 @@ final class Style {
 	private static array $registry = array();
 
 	/**
+	 * Style identities claimed during the current request, including registry entries
+	 * later evicted because another ID took ownership of the same selector.
+	 *
+	 * @var array<string, array{selector: string, type: string}>
+	 */
+	private static array $claimed_identities = array();
+
+	/**
 	 * Style ID.
 	 *
 	 * @var string
@@ -210,13 +218,15 @@ final class Style {
 	 * Validate and add this style to the registry.
 	 *
 	 * @return string Registered style ID.
-	 * @throws InvalidArgumentException When required fields are missing or invalid.
+	 * @throws InvalidArgumentException When required fields are invalid or the style ID has another identity.
 	 */
 	public function add(): string {
 		$style_id      = $this->validate_style_id();
 		$selector      = $this->validate_selector();
 		$css           = $this->validate_css();
 		$resolved_type = $this->resolve_type( $selector );
+
+		self::assert_style_id_identity_available( $style_id, $selector, $resolved_type );
 
 		$style = array(
 			'selector'   => $selector,
@@ -236,6 +246,11 @@ final class Style {
 		if ( null !== $this->overwrite_on_register ) {
 			$style['overwrite_on_register'] = $this->overwrite_on_register;
 		}
+
+		self::$claimed_identities[ $style_id ] = array(
+			'selector' => $selector,
+			'type'     => $resolved_type,
+		);
 
 		self::remove_registry_selector_conflicts( $style_id, $selector );
 
@@ -281,19 +296,22 @@ final class Style {
 	 * Handles readonly and non-readonly styles differently:
 	 * - Readonly styles: Always overwrite DB and persist readonly state
 	 * - Overwrite-on-register styles: Always overwrite DB without persisting readonly
-	 * - Non-readonly styles (for example class-prop defaults): Only write if not exists, user owns after first registration
+	 * - Non-readonly styles: Require matching selector/type identity, then preserve user-owned DB content after first registration
 	 *
 	 * Also ensures:
 	 * - Removing orphaned code-owned styles no longer in code
 	 * - Removing styles with same selector but different ID (conflicts)
 	 *
 	 * @return bool True when styles are up-to-date, false on persistence failure.
+	 * @throws InvalidArgumentException When a registry style ID conflicts with persisted identity.
 	 */
 	public static function register_all(): bool {
 		$existing_styles = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
 		if ( ! is_array( $existing_styles ) ) {
 			$existing_styles = array();
 		}
+
+		self::assert_claimed_identities_match_persisted( $existing_styles );
 
 		// If registry is empty, clear orphaned code-owned styles from DB.
 		if ( array() === self::$registry ) {
@@ -402,7 +420,8 @@ final class Style {
 	 * Clear the in-memory style registry.
 	 */
 	public static function reset(): void {
-		self::$registry = array();
+		self::$registry           = array();
+		self::$claimed_identities = array();
 	}
 
 	/**
@@ -415,12 +434,50 @@ final class Style {
 	}
 
 	/**
-	 * Restore the in-memory style registry from a snapshot.
+	 * Capture the complete request-local style state for temporary reset/rollback.
+	 *
+	 * @return array{
+	 *     registry: array<string, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
+	 *     claimed_identities: array<string, array{selector: string, type: string}>
+	 * }
+	 */
+	public static function snapshot_state(): array {
+		return array(
+			'registry'           => self::$registry,
+			'claimed_identities' => self::$claimed_identities,
+		);
+	}
+
+	/**
+	 * Restore the active registry as a new identity-claim baseline.
+	 *
+	 * Use restore_state() instead when temporarily resetting within the same request.
 	 *
 	 * @param array<string, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}> $registry Style registry snapshot.
 	 */
 	public static function restore( array $registry ): void {
-		self::$registry = $registry;
+		self::$registry           = $registry;
+		self::$claimed_identities = array();
+
+		foreach ( $registry as $style_id => $style ) {
+			self::$claimed_identities[ (string) $style_id ] = array(
+				'selector' => $style['selector'],
+				'type'     => $style['type'],
+			);
+		}
+	}
+
+	/**
+	 * Restore complete request-local state captured by snapshot_state().
+	 *
+	 * @param array{
+	 *     registry: array<string, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
+	 *     claimed_identities: array<string, array{selector: string, type: string}>
+	 * } $state Complete style state snapshot.
+	 */
+	public static function restore_state( array $state ): void {
+		self::$registry           = $state['registry'];
+		self::$claimed_identities = $state['claimed_identities'];
 	}
 
 	/**
@@ -540,6 +597,121 @@ final class Style {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Reject reusing a style ID for a different selector or type.
+	 *
+	 * @param string $style_id Proposed style ID.
+	 * @param string $selector Proposed style selector.
+	 * @param string $type     Proposed style type.
+	 * @throws InvalidArgumentException When the style ID already identifies another selector or type.
+	 */
+	private static function assert_style_id_identity_available( string $style_id, string $selector, string $type ): void {
+		if ( isset( self::$claimed_identities[ $style_id ] ) ) {
+			$existing_selector = self::$claimed_identities[ $style_id ]['selector'];
+			$existing_type     = self::$claimed_identities[ $style_id ]['type'];
+			if (
+				StylesParserRuleScanner::normalize_selector_key( $existing_selector ) !== StylesParserRuleScanner::normalize_selector_key( $selector )
+				|| $existing_type !== $type
+			) {
+				self::throw_style_identity_conflict( $style_id, $existing_selector, $existing_type, $selector, $type );
+			}
+		}
+
+		// Mutable ownership covers persisted content, never selector/type identity.
+		$persisted = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
+		if ( ! is_array( $persisted ) ) {
+			return;
+		}
+
+		self::assert_style_identity_matches_persisted( $style_id, $selector, $type, $persisted );
+	}
+
+	/**
+	 * Recheck every request-local identity claim against the storage snapshot being updated.
+	 *
+	 * @param array<array-key, mixed> $persisted Persisted Etch styles.
+	 * @throws InvalidArgumentException When a claimed style conflicts with persisted identity.
+	 */
+	private static function assert_claimed_identities_match_persisted( array $persisted ): void {
+		foreach ( self::$claimed_identities as $style_id => $identity ) {
+			self::assert_style_identity_matches_persisted(
+				(string) $style_id,
+				$identity['selector'],
+				$identity['type'],
+				$persisted
+			);
+		}
+	}
+
+	/**
+	 * Reject a proposed identity when its persisted ID is occupied differently.
+	 *
+	 * @param string                  $style_id Proposed style ID.
+	 * @param string                  $selector Proposed style selector.
+	 * @param string                  $type     Proposed style type.
+	 * @param array<array-key, mixed> $persisted Persisted Etch styles.
+	 * @throws InvalidArgumentException When persisted identity is malformed or conflicting.
+	 */
+	private static function assert_style_identity_matches_persisted( string $style_id, string $selector, string $type, array $persisted ): void {
+		if ( ! array_key_exists( $style_id, $persisted ) ) {
+			return;
+		}
+
+		$persisted_style = $persisted[ $style_id ];
+		if (
+			! is_array( $persisted_style )
+			|| ! isset( $persisted_style['selector'] )
+			|| ! is_string( $persisted_style['selector'] )
+			|| '' === trim( $persisted_style['selector'] )
+		) {
+			throw new InvalidArgumentException(
+				sprintf( 'Style ID `%s` is occupied by a malformed persisted style and cannot be reused.', $style_id )
+			);
+		}
+
+		$existing_selector   = trim( $persisted_style['selector'] );
+		$normalized_existing = self::normalize_persisted_style( $persisted_style );
+		$existing_type       = isset( $normalized_existing['type'] ) && is_string( $normalized_existing['type'] )
+			? $normalized_existing['type']
+			: self::infer_type_from_selector( $existing_selector );
+
+		if (
+			StylesParserRuleScanner::normalize_selector_key( $existing_selector ) !== StylesParserRuleScanner::normalize_selector_key( $selector )
+			|| $existing_type !== $type
+		) {
+			self::throw_style_identity_conflict( $style_id, $existing_selector, $existing_type, $selector, $type );
+		}
+	}
+
+	/**
+	 * Throw a consistent style identity collision error.
+	 *
+	 * @param string $style_id          Conflicting style ID.
+	 * @param string $existing_selector Existing selector.
+	 * @param string $existing_type     Existing type.
+	 * @param string $selector          Proposed selector.
+	 * @param string $type              Proposed type.
+	 * @throws InvalidArgumentException Always.
+	 */
+	private static function throw_style_identity_conflict(
+		string $style_id,
+		string $existing_selector,
+		string $existing_type,
+		string $selector,
+		string $type
+	): void {
+		throw new InvalidArgumentException(
+			sprintf(
+				'Style ID `%s` already identifies selector `%s` with type `%s` and cannot be reused for selector `%s` with type `%s`.',
+				$style_id,
+				$existing_selector,
+				$existing_type,
+				$selector,
+				$type
+			)
+		);
 	}
 
 	/**

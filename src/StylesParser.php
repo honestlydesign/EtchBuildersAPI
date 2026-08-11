@@ -114,6 +114,7 @@ final class StylesParser {
 	 * Parse CSS content and extract styles.
 	 *
 	 * @param string $content CSS file content.
+	 * @throws RuntimeException When multiple selectors resolve to the same style ID.
 	 */
 	private function parse_content( string $content ): void {
 		foreach ( StylesParserRuleScanner::scan_style_rules( $content ) as $rule ) {
@@ -127,6 +128,18 @@ final class StylesParser {
 				->id( $id )
 				->selector( $selector )
 				->css( $this->normalize_css( $rule['css'] ) );
+
+			if ( isset( $this->styles[ $id ] ) ) {
+				$existing_selector = (string) ( $this->styles[ $id ]->to_array()['selector'] ?? '' );
+				throw new RuntimeException(
+					sprintf(
+						'Style ID `%s` resolves to selector `%s` and selector `%s` in the same CSS file; each style ID must identify exactly one selector.',
+						$id,
+						$existing_selector,
+						$selector
+					)
+				);
+			}
 
 			$this->styles[ $id ] = $style;
 		}
