@@ -32,16 +32,18 @@ final class ComponentPropValueEncoderTest extends TestCase {
 
 	/**
 	 * @var array{
-	 *     registry: array<string, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
-	 *     claimed_identities: array<string, array{selector: string, type: string}>
+	 *     registry: array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
+	 *     claimed_identities: array<array-key, array{selector: string, type: string}>,
+	 *     retained_persisted_identities: array<array-key, array{selector: string, type: string}>
 	 * }
 	 */
 	private array $original_style_state;
 
 	/**
 	 * @var array{
-	 *     registry: array<string, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
-	 *     claimed_identities: array<string, array{selector: string, type: string}>
+	 *     registry: array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
+	 *     claimed_identities: array<array-key, array{selector: string, type: string}>,
+	 *     retained_persisted_identities: array<array-key, array{selector: string, type: string}>
 	 * }
 	 */
 	private array $clean_style_state;

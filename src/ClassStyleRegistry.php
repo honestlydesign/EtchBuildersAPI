@@ -9,6 +9,8 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders;
 
+use HonestlyDesign\EtchBuilders\Exceptions\PersistedStyleIdentityException;
+
 /**
  * Ensures every static class token used in builder markup can resolve to etch_styles.
  */
@@ -23,6 +25,13 @@ final class ClassStyleRegistry {
 	private const DYNAMIC_CLASS_PATTERN = '/[{}]/';
 
 	private const COMPOUND_CLASS_SEGMENT_PATTERN = '/^\.([A-Za-z][A-Za-z0-9_-]*)$/';
+
+	/**
+	 * Persisted Etch style types accepted by the storage contract.
+	 *
+	 * @var array<int, string>
+	 */
+	private const STYLE_TYPES = array( 'class', 'id', 'tag', 'element', 'attribute', 'custom' );
 
 	/**
 	 * Cached selector => style ID map for the current resolution pass.
@@ -101,7 +110,7 @@ final class ClassStyleRegistry {
 	 * Resolve a class token to an existing Etch style ID, if any.
 	 *
 	 * @param string                            $class_token       HTML class token.
-	 * @param array<string, array<string, mixed>>|null $persisted_styles Optional etch_styles option payload.
+	 * @param array<array-key, array<string, mixed>>|null $persisted_styles Optional etch_styles option payload.
 	 */
 	public static function resolve_style_id_for_class( string $class_token, ?array $persisted_styles = null ): ?string {
 		if ( self::should_skip_class_token( $class_token ) ) {
@@ -110,12 +119,18 @@ final class ClassStyleRegistry {
 
 		$standalone_id = self::resolve_standalone_class_style_id( $class_token, $persisted_styles );
 		if ( null !== $standalone_id ) {
-			self::ensure_style_id_in_memory_registry( $standalone_id, $class_token );
+			if ( null === $persisted_styles ) {
+				self::retain_existing_persisted_style( $standalone_id, $class_token );
+			}
 
 			return $standalone_id;
 		}
 
-		if ( self::selector_map_contains_class_token( $class_token, $persisted_styles ) ) {
+		if ( null !== $persisted_styles ) {
+			return null;
+		}
+
+		if ( self::selector_map_contains_class_token( $class_token ) ) {
 			return self::ensure_registered_for_class( $class_token );
 		}
 
@@ -126,7 +141,7 @@ final class ClassStyleRegistry {
 	 * Resolve a standalone class style ID (selector exactly .{token}, type class).
 	 *
 	 * @param string                            $class_token       HTML class token.
-	 * @param array<string, array<string, mixed>>|null $persisted_styles Optional etch_styles option payload.
+	 * @param array<array-key, array<string, mixed>>|null $persisted_styles Optional etch_styles option payload.
 	 */
 	public static function resolve_standalone_class_style_id( string $class_token, ?array $persisted_styles = null ): ?string {
 		if ( self::should_skip_class_token( $class_token ) ) {
@@ -135,15 +150,27 @@ final class ClassStyleRegistry {
 
 		$selector = self::selector_for_class( $class_token );
 
+		$matching_ids = array();
+
 		foreach ( self::iter_registered_style_entries( $persisted_styles ) as $style_id => $style ) {
 			if ( ! self::is_standalone_class_style_for_selector( $style, $selector ) ) {
 				continue;
 			}
 
-			return $style_id;
+			$matching_ids[] = (string) $style_id;
 		}
 
-		return null;
+		if ( count( $matching_ids ) > 1 ) {
+			throw new PersistedStyleIdentityException(
+				sprintf(
+					'Multiple Etch style IDs claim standalone class selector `%s`: %s.',
+					$selector,
+					implode( ', ', $matching_ids )
+				)
+			);
+		}
+
+		return $matching_ids[0] ?? null;
 	}
 
 	/**
@@ -154,7 +181,7 @@ final class ClassStyleRegistry {
 	public static function ensure_standalone_class_style_for_token( string $class_token ): string {
 		$existing = self::resolve_standalone_class_style_id( $class_token );
 		if ( null !== $existing ) {
-			self::ensure_style_id_in_memory_registry( $existing, $class_token );
+			self::retain_existing_persisted_style( $existing, $class_token );
 
 			return $existing;
 		}
@@ -204,6 +231,8 @@ final class ClassStyleRegistry {
 
 			try {
 				$style_id = self::ensure_standalone_class_style_for_token( $class_token );
+			} catch ( PersistedStyleIdentityException $exception ) {
+				throw $exception;
 			} catch ( \InvalidArgumentException $exception ) {
 				continue;
 			}
@@ -250,6 +279,8 @@ final class ClassStyleRegistry {
 
 				try {
 					$standalone_id = self::ensure_standalone_class_style_for_token( $token );
+				} catch ( PersistedStyleIdentityException $exception ) {
+					throw $exception;
 				} catch ( \InvalidArgumentException $exception ) {
 					continue;
 				}
@@ -286,7 +317,7 @@ final class ClassStyleRegistry {
 
 		$existing = self::resolve_standalone_class_style_id( $class_token );
 		if ( null !== $existing ) {
-			self::ensure_style_id_in_memory_registry( $existing, $class_token );
+			self::retain_existing_persisted_style( $existing, $class_token );
 
 			return $existing;
 		}
@@ -299,14 +330,18 @@ final class ClassStyleRegistry {
 
 		$selector = self::selector_for_class( $class_token );
 
-		$style_id = Style::new()
-			->id( $class_token )
-			->selector( $selector )
-			->css( '/* class style registered for builder preview */' )
-			->type( 'class' )
-			->collection( 'OhMyIDEtch' )
-			->readonly( true )
-			->add();
+		try {
+			$style_id = Style::new()
+				->id( $class_token )
+				->selector( $selector )
+				->css( '/* class style registered for builder preview */' )
+				->type( 'class' )
+				->collection( 'OhMyIDEtch' )
+				->readonly( true )
+				->add();
+		} catch ( \InvalidArgumentException $exception ) {
+			throw new PersistedStyleIdentityException( $exception->getMessage(), (int) $exception->getCode(), $exception );
+		}
 
 		self::reset_cache();
 
@@ -342,6 +377,8 @@ final class ClassStyleRegistry {
 
 			try {
 				$style_id = self::ensure_registered_for_class( $class_token );
+			} catch ( PersistedStyleIdentityException $exception ) {
+				throw $exception;
 			} catch ( \InvalidArgumentException $exception ) {
 				continue;
 			}
@@ -539,7 +576,7 @@ final class ClassStyleRegistry {
 	/**
 	 * Build selector => style ID map from registry and persisted styles.
 	 *
-	 * @param array<string, array<string, mixed>>|null $persisted_styles etch_styles option.
+	 * @param array<array-key, array<string, mixed>>|null $persisted_styles etch_styles option.
 	 * @return array<string, string>
 	 */
 	public static function selector_to_id_map( ?array $persisted_styles = null ): array {
@@ -580,41 +617,26 @@ final class ClassStyleRegistry {
 	}
 
 	/**
-	 * Ensure a resolved style ID is present in the in-memory Style registry.
+	 * Protect an existing persisted record linked during this request.
+	 *
+	 * Retention only prevents legacy orphan cleanup. It does not import the
+	 * record into the request-local registry or claim its CSS, selector, type,
+	 * collection, or metadata. Explicit caller-provided snapshots never reach
+	 * this method and remain observational.
 	 *
 	 * @param string $style_id    Resolved Etch style ID.
-	 * @param string $class_token Source HTML class token.
+	 * @param string $class_token HTML class token resolved to that ID.
 	 */
-	private static function ensure_style_id_in_memory_registry( string $style_id, string $class_token ): void {
+	private static function retain_existing_persisted_style( string $style_id, string $class_token ): void {
 		if ( isset( Style::registered_styles()[ $style_id ] ) ) {
 			return;
 		}
 
-		$persisted = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
-		if ( is_array( $persisted ) && isset( $persisted[ $style_id ] ) && is_array( $persisted[ $style_id ] ) ) {
-			$style = $persisted[ $style_id ];
-			$css   = isset( $style['css'] ) && is_string( $style['css'] ) ? $style['css'] : '';
-
-			Style::new()
-				->id( $style_id )
-				->selector( isset( $style['selector'] ) && is_string( $style['selector'] ) ? $style['selector'] : self::selector_for_class( $class_token ) )
-				->css( '' !== $css ? $css : '/* class style registered for builder preview */' )
-				->type( 'class' )
-				->collection( 'OhMyIDEtch' )
-				->readonly( true )
-				->add();
-
-			return;
+		try {
+			Style::retain_linked_persisted_style( $style_id, self::selector_for_class( $class_token ), 'class' );
+		} catch ( \InvalidArgumentException $exception ) {
+			throw new PersistedStyleIdentityException( $exception->getMessage(), (int) $exception->getCode(), $exception );
 		}
-
-		Style::new()
-			->id( $style_id )
-			->selector( self::selector_for_class( $class_token ) )
-			->css( '/* class style registered for builder preview */' )
-			->type( 'class' )
-			->collection( 'OhMyIDEtch' )
-			->readonly( true )
-			->add();
 	}
 
 	/**
@@ -702,7 +724,7 @@ final class ClassStyleRegistry {
 	 * Whether any registered selector includes the given class token.
 	 *
 	 * @param string                            $class_token       HTML class token.
-	 * @param array<string, array<string, mixed>>|null $persisted_styles Optional etch_styles option payload.
+	 * @param array<array-key, array<string, mixed>>|null $persisted_styles Optional etch_styles option payload.
 	 */
 	private static function selector_map_contains_class_token( string $class_token, ?array $persisted_styles = null ): bool {
 		if ( isset( self::$compound_contains_cache[ $class_token ] ) ) {
@@ -730,8 +752,8 @@ final class ClassStyleRegistry {
 	/**
 	 * Iterate in-memory and persisted style entries.
 	 *
-	 * @param array<string, array<string, mixed>>|null $persisted_styles etch_styles option.
-	 * @return array<string, array<string, mixed>>
+	 * @param array<array-key, array<string, mixed>>|null $persisted_styles etch_styles option.
+	 * @return array<array-key, array<string, mixed>>
 	 */
 	private static function iter_registered_style_entries( ?array $persisted_styles = null ): array {
 		$entries = Style::registered_styles();
@@ -742,12 +764,13 @@ final class ClassStyleRegistry {
 		}
 
 		foreach ( $persisted_styles as $style_id => $style ) {
-			if ( ! is_string( $style_id ) || ! is_array( $style ) ) {
+			if ( ! is_array( $style ) ) {
 				continue;
 			}
 
-			if ( ! isset( $entries[ $style_id ] ) ) {
-				$entries[ $style_id ] = $style;
+			$normalized_style_id = (string) $style_id;
+			if ( ! isset( $entries[ $normalized_style_id ] ) ) {
+				$entries[ $normalized_style_id ] = $style;
 			}
 		}
 
@@ -766,17 +789,24 @@ final class ClassStyleRegistry {
 			return false;
 		}
 
-		$type = isset( $style['type'] ) && is_string( $style['type'] ) ? trim( $style['type'] ) : '';
-
-		if ( 'class' === $type ) {
-			return true;
+		if ( ! array_key_exists( 'type', $style ) ) {
+			return self::is_standalone_class_selector( $style_selector );
 		}
 
-		if ( '' !== $type ) {
-			return false;
+		if ( ! is_string( $style['type'] ) || ! in_array( trim( $style['type'] ), self::STYLE_TYPES, true ) ) {
+			throw new PersistedStyleIdentityException(
+				'Persisted Etch style with selector `' . $style_selector . '` has a present malformed `type` value.'
+			);
 		}
 
-		return self::is_standalone_class_selector( $style_selector );
+		$type = trim( $style['type'] );
+		if ( 'class' !== $type ) {
+			throw new PersistedStyleIdentityException(
+				'Persisted Etch style with selector `' . $style_selector . '` must use type=class for HTML class linkage; got `' . $type . '`.'
+			);
+		}
+
+		return true;
 	}
 
 	/**

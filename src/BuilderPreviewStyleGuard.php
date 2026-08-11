@@ -183,6 +183,7 @@ final class BuilderPreviewStyleGuard {
 					array_merge(
 						$registered,
 						self::ETCH_CORE_STYLE_IDS,
+						Style::retained_persisted_style_ids(),
 						self::persisted_readonly_style_ids()
 					)
 				)
@@ -783,12 +784,12 @@ final class BuilderPreviewStyleGuard {
 
 		$ids = array();
 		foreach ( $persisted as $style_id => $style ) {
-			if ( ! is_string( $style_id ) || ! is_array( $style ) ) {
+			if ( ! is_array( $style ) ) {
 				continue;
 			}
 
 			if ( ! empty( $style['readonly'] ) ) {
-				$ids[] = $style_id;
+				$ids[] = (string) $style_id;
 			}
 		}
 
