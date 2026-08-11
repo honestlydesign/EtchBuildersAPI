@@ -14,27 +14,12 @@ use HonestlyDesign\EtchBuilders\ComponentProperties\Shared\BaseProperty;
 use HonestlyDesign\EtchBuilders\ComponentProperties\Shared\PropertyPrimitive;
 
 /**
- * Fluent builder for Etch number properties.
+ * Fluent builder for Etch number property definitions.
  *
- * WARNING: NumberProperty is currently NOT SUPPORTED for component instance properties.
- *
- * Component instance properties are stored in HTML attributes, which can only contain strings.
- * Always use StringProperty with string defaults for numeric values:
- *
- *   // ❌ WRONG: NumberProperty will not work correctly
- *   NumberProperty::new('Slides Per View')
- *     ->key('slidesPerView')
- *     ->default(1)
- *
- *   // ✅ CORRECT: Use StringProperty with string default
- *   StringProperty::new('Slides Per View')
- *     ->key('slidesPerView')
- *     ->default('1')
- *
- * The TypeScript runtime must parse these string values to numbers when needed:
- *   parseInt(element.dataset.omideSlidesPerView, 10)
- *
- * This class exists for future use when Etch may support typed property storage.
+ * Etch supports the primitive=number definition and numeric defaults. Authored
+ * component instance attributes still cross the HTML wire as a numeric-string;
+ * Etch resolves that string to a number. There is deliberately no prop_number()
+ * instance method: use the matrix-backed numeric-string value route.
  *
  * Example:
  *   NumberProperty::new('Count')
