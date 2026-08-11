@@ -11,6 +11,7 @@ namespace HonestlyDesign\EtchBuilders\EtchBlocks;
 
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\Block;
+use HonestlyDesign\EtchBuilders\ClassStyleDiagnostic;
 use HonestlyDesign\EtchBuilders\ClassStyleRegistry;
 use HonestlyDesign\EtchBuilders\ClassStyleSet;
 use HonestlyDesign\EtchBuilders\Environment;
@@ -227,11 +228,27 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	 * @throws InvalidArgumentException When a static value is not a registered class-style ID.
 	 */
 	public function prop_class( string $key, array $class_names ): self {
+		ClassStyleDiagnostic::emit_deprecation(
+			ClassStyleDiagnostic::DESTRUCTIVE_LEGACY_CALL,
+			'ComponentBlock::prop_class() uses the deprecated legacy raw class-property lane.',
+			'Build ClassStyleReference values, combine them with ClassStyleSet, and call ComponentBlock::class_prop().'
+		);
+
 		$resolved = array();
 
 		foreach ( $class_names as $class_name ) {
 			if ( ! is_string( $class_name ) || '' === trim( $class_name ) ) {
 				throw new InvalidArgumentException( 'Class tokens must be non-empty strings.' );
+			}
+
+			if ( 1 === preg_match( '/^rt-/', $class_name ) ) {
+				ClassStyleDiagnostic::emit_deprecation(
+					ClassStyleDiagnostic::RUNTIME_TOKEN,
+					sprintf( 'Runtime token "%s" is owned by Etch and is not a component Class Style ID.', $class_name ),
+					'Put the token on an element HTML class through ElementBlock::class(); do not use it as a component class-property value.'
+				);
+				$resolved[] = $class_name;
+				continue;
 			}
 
 			if ( ClassStyleRegistry::should_skip_class_token( $class_name ) ) {
