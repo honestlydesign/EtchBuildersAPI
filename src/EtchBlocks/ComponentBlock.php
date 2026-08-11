@@ -12,6 +12,7 @@ namespace HonestlyDesign\EtchBuilders\EtchBlocks;
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\Block;
 use HonestlyDesign\EtchBuilders\ClassStyleRegistry;
+use HonestlyDesign\EtchBuilders\ClassStyleSet;
 use HonestlyDesign\EtchBuilders\Environment;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Concerns\HasBlockBase;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Concerns\HasChildren;
@@ -198,12 +199,27 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	}
 
 	/**
+	 * Set a typed class component prop from validated ordered references.
+	 *
+	 * This is the Golden Path for top-level class properties. ClassStyleSet::none()
+	 * writes an explicit empty override rather than omitting the property.
+	 *
+	 * @param string        $key Prop key.
+	 * @param ClassStyleSet $classes Validated ordered class-style value.
+	 */
+	public function class_prop( string $key, ClassStyleSet $classes ): self {
+		return $this->set_prop_value( $key, ComponentPropValueEncoder::class( $classes->ids() ) );
+	}
+
+	/**
 	 * Set a class component prop.
 	 *
 	 * Static values are opaque Etch style IDs and are looked up directly without
 	 * selector resolution, registration, or any other style mutation. Dynamic
 	 * values ({...}) and legacy runtime tokens (rt-*) retain their current
 	 * pass-through behavior for backwards compatibility.
+	 *
+	 * @deprecated Use class_prop() with ClassStyleSet for validated typed values.
 	 *
 	 * @param string             $key Prop key.
 	 * @param array<int, string> $class_names Style IDs or pass-through dynamic values.
