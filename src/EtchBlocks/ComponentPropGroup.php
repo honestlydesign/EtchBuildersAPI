@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders\EtchBlocks;
 
+use HonestlyDesign\EtchBuilders\ClassStyleDiagnostic;
 use HonestlyDesign\EtchBuilders\ClassStyleSet;
 
 /**
@@ -83,6 +84,22 @@ final class ComponentPropGroup implements ComponentPropValueInterface {
 	 * @param array<int, string> $class_names Class names or style IDs.
 	 */
 	public function class( string $key, array $class_names ): self {
+		ClassStyleDiagnostic::emit_deprecation(
+			ClassStyleDiagnostic::DESTRUCTIVE_LEGACY_CALL,
+			'ComponentPropGroup::class() uses the deprecated legacy raw class-property lane.',
+			'Build ClassStyleReference values, combine them with ClassStyleSet, and call ComponentPropGroup::class_prop().'
+		);
+
+		foreach ( $class_names as $class_name ) {
+			if ( is_string( $class_name ) && 1 === preg_match( '/^rt-/', $class_name ) ) {
+				ClassStyleDiagnostic::emit_deprecation(
+					ClassStyleDiagnostic::RUNTIME_TOKEN,
+					sprintf( 'Runtime token "%s" is owned by Etch and is not a component Class Style ID.', $class_name ),
+					'Put the token on an element HTML class through ElementBlock::class(); do not use it as a component class-property value.'
+				);
+			}
+		}
+
 		$this->payload[ $key ] = ComponentPropValueEncoder::class( $class_names );
 		return $this;
 	}

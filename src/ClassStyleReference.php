@@ -9,8 +9,6 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders;
 
-use InvalidArgumentException;
-
 /**
  * Proves that an opaque style ID currently identifies one simple class selector.
  */
@@ -52,19 +50,45 @@ final class ClassStyleReference {
 	 * precedence over persistence, matching the effective registration plan.
 	 *
 	 * @param string $style_id Opaque Etch style ID.
-	 * @throws InvalidArgumentException When the ID or class-style identity is invalid.
+	 * @throws Exceptions\ClassStyleDiagnosticException When the ID or class-style identity is invalid.
 	 */
 	public static function registered( string $style_id ): self {
 		if ( '' === $style_id || trim( $style_id ) !== $style_id ) {
-			throw new InvalidArgumentException(
-				sprintf( 'Class Style ID "%s" must be a registered opaque Etch style ID.', $style_id )
+			throw ClassStyleDiagnostic::failure(
+				ClassStyleDiagnostic::UNKNOWN_ID,
+				sprintf( 'Class Style ID "%s" is not a valid registered opaque Etch style ID.', $style_id ),
+				'Register an exact type=class style, then pass its opaque ID to ClassStyleReference::registered().'
 			);
 		}
 
-		$style = self::find_registered_style( $style_id );
+		if ( 1 === preg_match( '/^rt-/', $style_id ) ) {
+			throw ClassStyleDiagnostic::failure(
+				ClassStyleDiagnostic::RUNTIME_TOKEN,
+				sprintf( 'Runtime token "%s" is owned by Etch and cannot be a component Class Style ID.', $style_id ),
+				'Put the token on an element HTML class through ElementBlock::class(); do not pass it to ClassStyleReference::registered().'
+			);
+		}
+
+		$styles = self::effective_registered_styles();
+		$style  = isset( $styles[ $style_id ] ) ? $styles[ $style_id ] : null;
 		if ( null === $style ) {
-			throw new InvalidArgumentException(
-				sprintf( 'Class Style ID "%s" is not registered in etch_styles.', $style_id )
+			$matching_ids = self::find_style_ids_for_input_class_name( $style_id, $styles );
+			if ( array() !== $matching_ids ) {
+				throw ClassStyleDiagnostic::failure(
+					ClassStyleDiagnostic::CLASS_NAME_INPUT,
+					sprintf(
+						'Input "%s" is a class name or selector, not an opaque Class Style ID; matching registered ID(s): %s.',
+						$style_id,
+						implode( ', ', $matching_ids )
+					),
+					'Pass the matching opaque ID to ClassStyleReference::registered(), then use the resulting reference in ClassStyleSet.'
+				);
+			}
+
+			throw ClassStyleDiagnostic::failure(
+				ClassStyleDiagnostic::UNKNOWN_ID,
+				sprintf( 'Class Style ID "%s" is not registered in etch_styles.', $style_id ),
+				'Register an exact type=class style, then pass its opaque ID to ClassStyleReference::registered().'
 			);
 		}
 
@@ -72,23 +96,23 @@ final class ClassStyleReference {
 		$has_type = array_key_exists( 'type', $style );
 		$type     = $has_type && is_string( $style['type'] ) ? trim( $style['type'] ) : '';
 
-		if ( ! $has_type && 1 === preg_match( self::EXACT_CLASS_SELECTOR_PATTERN, $selector ) ) {
-			$type = 'class';
-		}
-
-		if ( 'class' !== $type ) {
-			throw new InvalidArgumentException(
-				sprintf( 'Class Style ID "%s" must reference a type=class Etch style.', $style_id )
+		if ( $has_type && 'class' !== $type ) {
+			throw ClassStyleDiagnostic::failure(
+				ClassStyleDiagnostic::NON_CLASS_STYLE,
+				sprintf( 'Class Style ID "%s" references type "%s", not type=class.', $style_id, $type ),
+				'Use a type=class style with exactly one simple selector, then pass its opaque ID to ClassStyleReference::registered().'
 			);
 		}
 
 		if ( 1 !== preg_match( self::EXACT_CLASS_SELECTOR_PATTERN, $selector ) ) {
-			throw new InvalidArgumentException(
+			throw ClassStyleDiagnostic::failure(
+				ClassStyleDiagnostic::COMPOUND_SELECTOR,
 				sprintf(
 					'Class Style ID "%s" must reference exactly one simple class selector such as ".card"; got "%s".',
 					$style_id,
 					$selector
-				)
+				),
+				'Keep pseudo, descendant, state, and media rules inside the owning standalone class style, then reference that root style with ClassStyleReference::registered().'
 			);
 		}
 
@@ -110,22 +134,62 @@ final class ClassStyleReference {
 	}
 
 	/**
-	 * Find a style by direct ID without importing or mutating it.
+	 * Find opaque IDs whose exact selector matches class-name-shaped input.
 	 *
-	 * @param string $style_id Opaque Etch style ID.
-	 * @return array<string, mixed>|null
+	 * @param string                                      $input Class name or selector candidate.
+	 * @param array<array-key, array<string, mixed>> $styles Effective style records.
+	 * @return array<int, string>
 	 */
-	private static function find_registered_style( string $style_id ): ?array {
-		$registered = Style::registered_styles();
-		if ( isset( $registered[ $style_id ] ) ) {
-			return $registered[ $style_id ];
+	private static function find_style_ids_for_input_class_name( string $input, array $styles ): array {
+		$selector = '.' === substr( $input, 0, 1 ) ? $input : '.' . $input;
+		if ( 1 !== preg_match( self::EXACT_CLASS_SELECTOR_PATTERN, $selector ) ) {
+			return array();
 		}
 
-		$persisted = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
-		if ( ! is_array( $persisted ) || ! isset( $persisted[ $style_id ] ) || ! is_array( $persisted[ $style_id ] ) ) {
-			return null;
+		$matching_ids = array();
+		foreach ( $styles as $style_id => $style ) {
+			$registered_selector = isset( $style['selector'] ) && is_string( $style['selector'] )
+				? trim( $style['selector'] )
+				: '';
+			if ( $selector !== $registered_selector ) {
+				continue;
+			}
+
+			if ( array_key_exists( 'type', $style ) && ( ! is_string( $style['type'] ) || 'class' !== trim( $style['type'] ) ) ) {
+				continue;
+			}
+
+			$matching_ids[] = (string) $style_id;
 		}
 
-		return $persisted[ $style_id ];
+		sort( $matching_ids, SORT_STRING );
+
+		return $matching_ids;
+	}
+
+	/**
+	 * Return effective request-local and persisted styles without mutating either.
+	 *
+	 * Request-local definitions win for the same opaque ID, matching registration.
+	 *
+	 * @return array<array-key, array<string, mixed>>
+	 */
+	private static function effective_registered_styles(): array {
+		$styles = Style::registered_styles();
+		$stored = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
+
+		if ( ! is_array( $stored ) ) {
+			return $styles;
+		}
+
+		foreach ( $stored as $style_id => $style ) {
+			if ( ! is_array( $style ) || array_key_exists( $style_id, $styles ) ) {
+				continue;
+			}
+
+			$styles[ $style_id ] = $style;
+		}
+
+		return $styles;
 	}
 }
