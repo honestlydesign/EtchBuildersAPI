@@ -89,7 +89,7 @@ final class BuilderPreviewStyleGuard {
 	 * @return array<int, string> Validation error messages.
 	 */
 	public static function validate_site( array $entities ): array {
-		$style_snapshot = Style::snapshot();
+		$style_snapshot = Style::snapshot_state();
 
 		try {
 			Style::reset();
@@ -265,7 +265,7 @@ final class BuilderPreviewStyleGuard {
 			return $errors;
 		} finally {
 			ClassStyleRegistry::reset_cache();
-			Style::restore( $style_snapshot );
+			Style::restore_state( $style_snapshot );
 		}
 	}
 
