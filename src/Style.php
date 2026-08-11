@@ -39,7 +39,7 @@ final class Style {
 	/**
 	 * In-memory style registry keyed by style id.
 	 *
-	 * @var array<string, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>
+	 * @var array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>
 	 */
 	private static array $registry = array();
 
@@ -47,9 +47,19 @@ final class Style {
 	 * Style identities claimed during the current request, including registry entries
 	 * later evicted because another ID took ownership of the same selector.
 	 *
-	 * @var array<string, array{selector: string, type: string}>
+	 * @var array<array-key, array{selector: string, type: string}>
 	 */
 	private static array $claimed_identities = array();
+
+	/**
+	 * Existing persisted IDs linked during this request.
+	 *
+	 * Retention prevents legacy orphan cleanup without importing, adopting, or
+	 * rewriting the persisted definition through the request-local registry.
+	 *
+	 * @var array<array-key, array{selector: string, type: string}>
+	 */
+	private static array $retained_persisted_identities = array();
 
 	/**
 	 * Style ID.
@@ -312,6 +322,8 @@ final class Style {
 		}
 
 		self::assert_claimed_identities_match_persisted( $existing_styles );
+		self::assert_retained_identities_match_persisted( $existing_styles );
+		self::assert_retained_selectors_are_unique( $existing_styles );
 
 		// If registry is empty, clear orphaned code-owned styles from DB.
 		if ( array() === self::$registry ) {
@@ -319,6 +331,11 @@ final class Style {
 			$changed        = false;
 
 			foreach ( $existing_styles as $style_id => $style ) {
+				if ( isset( self::$retained_persisted_identities[ (string) $style_id ] ) ) {
+					$cleaned_styles[ $style_id ] = $style;
+					continue;
+				}
+
 				if ( is_array( $style ) && self::is_orphaned_code_owned_style( (string) $style_id, $style ) ) {
 					$changed = true;
 					continue;
@@ -366,6 +383,12 @@ final class Style {
 					continue;
 				}
 
+				$cleaned_existing[ $existing_style_id ] = $existing_style;
+				continue;
+			}
+
+			// A linked persisted record remains external to this registration pass.
+			if ( isset( self::$retained_persisted_identities[ $normalized_existing_style_id ] ) ) {
 				$cleaned_existing[ $existing_style_id ] = $existing_style;
 				continue;
 			}
@@ -420,14 +443,15 @@ final class Style {
 	 * Clear the in-memory style registry.
 	 */
 	public static function reset(): void {
-		self::$registry           = array();
-		self::$claimed_identities = array();
+		self::$registry                        = array();
+		self::$claimed_identities              = array();
+		self::$retained_persisted_identities    = array();
 	}
 
 	/**
 	 * Capture the current in-memory style registry.
 	 *
-	 * @return array<string, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>
+	 * @return array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>
 	 */
 	public static function snapshot(): array {
 		return self::$registry;
@@ -437,14 +461,16 @@ final class Style {
 	 * Capture the complete request-local style state for temporary reset/rollback.
 	 *
 	 * @return array{
-	 *     registry: array<string, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
-	 *     claimed_identities: array<string, array{selector: string, type: string}>
+	 *     registry: array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
+	 *     claimed_identities: array<array-key, array{selector: string, type: string}>,
+	 *     retained_persisted_identities: array<array-key, array{selector: string, type: string}>
 	 * }
 	 */
 	public static function snapshot_state(): array {
 		return array(
-			'registry'           => self::$registry,
-			'claimed_identities' => self::$claimed_identities,
+			'registry'                      => self::$registry,
+			'claimed_identities'            => self::$claimed_identities,
+			'retained_persisted_identities' => self::$retained_persisted_identities,
 		);
 	}
 
@@ -453,11 +479,12 @@ final class Style {
 	 *
 	 * Use restore_state() instead when temporarily resetting within the same request.
 	 *
-	 * @param array<string, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}> $registry Style registry snapshot.
+	 * @param array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}> $registry Style registry snapshot.
 	 */
 	public static function restore( array $registry ): void {
-		self::$registry           = $registry;
-		self::$claimed_identities = array();
+		self::$registry                        = $registry;
+		self::$claimed_identities              = array();
+		self::$retained_persisted_identities    = array();
 
 		foreach ( $registry as $style_id => $style ) {
 			self::$claimed_identities[ (string) $style_id ] = array(
@@ -471,19 +498,64 @@ final class Style {
 	 * Restore complete request-local state captured by snapshot_state().
 	 *
 	 * @param array{
-	 *     registry: array<string, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
-	 *     claimed_identities: array<string, array{selector: string, type: string}>
+	 *     registry: array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
+	 *     claimed_identities: array<array-key, array{selector: string, type: string}>,
+	 *     retained_persisted_identities?: array<array-key, array{selector: string, type: string}>
 	 * } $state Complete style state snapshot.
 	 */
 	public static function restore_state( array $state ): void {
-		self::$registry           = $state['registry'];
-		self::$claimed_identities = $state['claimed_identities'];
+		self::$registry                     = $state['registry'];
+		self::$claimed_identities           = $state['claimed_identities'];
+		self::$retained_persisted_identities = $state['retained_persisted_identities'] ?? array();
+	}
+
+	/**
+	 * Protect an existing linked record from orphan cleanup without adopting it.
+	 *
+	 * @internal
+	 * @param string $style_id Persisted opaque ID.
+	 * @param string $selector Selector observed when the record was linked.
+	 * @param string $type     Effective type observed when the record was linked.
+	 * @throws InvalidArgumentException When the persisted ID disappeared or changed identity.
+	 */
+	public static function retain_linked_persisted_style( string $style_id, string $selector, string $type ): void {
+		$selector = trim( $selector );
+		$type     = trim( $type );
+
+		self::assert_request_local_identity_matches( $style_id, $selector, $type );
+
+		$persisted = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
+		if ( ! is_array( $persisted ) || ! array_key_exists( $style_id, $persisted ) ) {
+			throw new InvalidArgumentException(
+				sprintf( 'Linked persisted style ID `%s` disappeared before its identity could be retained.', $style_id )
+			);
+		}
+
+		self::assert_style_identity_matches_persisted( $style_id, $selector, $type, $persisted );
+
+		self::$retained_persisted_identities[ $style_id ] = array(
+			'selector' => $selector,
+			'type'     => $type,
+		);
+	}
+
+	/**
+	 * Return opaque IDs of persisted records linked during this request.
+	 *
+	 * @internal
+	 * @return array<int, string>
+	 */
+	public static function retained_persisted_style_ids(): array {
+		return array_map(
+			static fn ( int|string $style_id ): string => (string) $style_id,
+			array_keys( self::$retained_persisted_identities )
+		);
 	}
 
 	/**
 	 * Return in-memory styles collected during current request.
 	 *
-	 * @return array<string, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>
+	 * @return array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>
 	 */
 	public static function registered_styles(): array {
 		return self::$registry;
@@ -608,16 +680,7 @@ final class Style {
 	 * @throws InvalidArgumentException When the style ID already identifies another selector or type.
 	 */
 	private static function assert_style_id_identity_available( string $style_id, string $selector, string $type ): void {
-		if ( isset( self::$claimed_identities[ $style_id ] ) ) {
-			$existing_selector = self::$claimed_identities[ $style_id ]['selector'];
-			$existing_type     = self::$claimed_identities[ $style_id ]['type'];
-			if (
-				StylesParserRuleScanner::normalize_selector_key( $existing_selector ) !== StylesParserRuleScanner::normalize_selector_key( $selector )
-				|| $existing_type !== $type
-			) {
-				self::throw_style_identity_conflict( $style_id, $existing_selector, $existing_type, $selector, $type );
-			}
-		}
+		self::assert_request_local_identity_matches( $style_id, $selector, $type );
 
 		// Mutable ownership covers persisted content, never selector/type identity.
 		$persisted = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
@@ -626,6 +689,32 @@ final class Style {
 		}
 
 		self::assert_style_identity_matches_persisted( $style_id, $selector, $type, $persisted );
+	}
+
+	/**
+	 * Reject an identity that contradicts either request-local identity ledger.
+	 *
+	 * @param string $style_id Proposed style ID.
+	 * @param string $selector Proposed style selector.
+	 * @param string $type     Proposed style type.
+	 * @throws InvalidArgumentException When the request already observed another identity.
+	 */
+	private static function assert_request_local_identity_matches( string $style_id, string $selector, string $type ): void {
+		$ledgers = array( self::$claimed_identities, self::$retained_persisted_identities );
+
+		foreach ( $ledgers as $identities ) {
+			if ( ! isset( $identities[ $style_id ] ) ) {
+				continue;
+			}
+
+			$existing = $identities[ $style_id ];
+			if (
+				StylesParserRuleScanner::normalize_selector_key( $existing['selector'] ) !== StylesParserRuleScanner::normalize_selector_key( $selector )
+				|| $existing['type'] !== $type
+			) {
+				self::throw_style_identity_conflict( $style_id, $existing['selector'], $existing['type'], $selector, $type );
+			}
+		}
 	}
 
 	/**
@@ -642,6 +731,83 @@ final class Style {
 				$identity['type'],
 				$persisted
 			);
+		}
+	}
+
+	/**
+	 * Recheck linked external identities against the storage snapshot being updated.
+	 *
+	 * @param array<array-key, mixed> $persisted Persisted Etch styles.
+	 * @throws InvalidArgumentException When a linked style disappeared or changed identity.
+	 */
+	private static function assert_retained_identities_match_persisted( array $persisted ): void {
+		foreach ( self::$retained_persisted_identities as $style_id => $identity ) {
+			$normalized_style_id = (string) $style_id;
+			if ( ! array_key_exists( $normalized_style_id, $persisted ) ) {
+				throw new InvalidArgumentException(
+					sprintf( 'Linked persisted style ID `%s` disappeared before registration completed.', $normalized_style_id )
+				);
+			}
+
+			self::assert_style_identity_matches_persisted(
+				$normalized_style_id,
+				$identity['selector'],
+				$identity['type'],
+				$persisted
+			);
+		}
+	}
+
+	/**
+	 * Reject any other request-local or persisted ID for a retained selector.
+	 *
+	 * @param array<array-key, mixed> $persisted Current persisted Etch styles.
+	 * @throws InvalidArgumentException When two IDs would own the same selector.
+	 */
+	private static function assert_retained_selectors_are_unique( array $persisted ): void {
+		foreach ( self::$retained_persisted_identities as $retained_id => $identity ) {
+			$normalized_retained_id = (string) $retained_id;
+			$retained_selector = StylesParserRuleScanner::normalize_selector_key( $identity['selector'] );
+
+			foreach ( self::$registry as $registry_id => $style ) {
+				$normalized_registry_id = (string) $registry_id;
+				if ( $normalized_registry_id === $normalized_retained_id ) {
+					continue;
+				}
+
+				if ( StylesParserRuleScanner::normalize_selector_key( $style['selector'] ) === $retained_selector ) {
+					throw new InvalidArgumentException(
+						sprintf(
+							'Selector `%s` is already linked to persisted style ID `%s` and cannot also be registered as style ID `%s`.',
+							$retained_selector,
+							$normalized_retained_id,
+							$normalized_registry_id
+						)
+					);
+				}
+			}
+
+			foreach ( $persisted as $persisted_id => $style ) {
+				$normalized_persisted_id = (string) $persisted_id;
+				if ( $normalized_persisted_id === $normalized_retained_id || ! is_array( $style ) ) {
+					continue;
+				}
+
+				$selector = isset( $style['selector'] ) && is_string( $style['selector'] )
+					? StylesParserRuleScanner::normalize_selector_key( $style['selector'] )
+					: '';
+
+				if ( '' !== $selector && $selector === $retained_selector ) {
+					throw new InvalidArgumentException(
+						sprintf(
+							'Selector `%s` is already linked to persisted style ID `%s` and is also claimed by persisted style ID `%s`.',
+							$retained_selector,
+							$normalized_retained_id,
+							$normalized_persisted_id
+						)
+					);
+				}
+			}
 		}
 	}
 
@@ -671,10 +837,23 @@ final class Style {
 			);
 		}
 
-		$existing_selector   = trim( $persisted_style['selector'] );
-		$normalized_existing = self::normalize_persisted_style( $persisted_style );
-		$existing_type       = isset( $normalized_existing['type'] ) && is_string( $normalized_existing['type'] )
-			? $normalized_existing['type']
+		$existing_selector = trim( $persisted_style['selector'] );
+		$has_type          = array_key_exists( 'type', $persisted_style );
+
+		if (
+			$has_type
+			&& (
+				! is_string( $persisted_style['type'] )
+				|| ! in_array( trim( $persisted_style['type'] ), self::STYLE_TYPES, true )
+			)
+		) {
+			throw new InvalidArgumentException(
+				sprintf( 'Style ID `%s` has a present malformed persisted `type` value and cannot be reused.', $style_id )
+			);
+		}
+
+		$existing_type = $has_type
+			? trim( $persisted_style['type'] )
 			: self::infer_type_from_selector( $existing_selector );
 
 		if (
@@ -722,6 +901,10 @@ final class Style {
 	 */
 	private static function is_orphaned_code_owned_style( string $style_id, array $style ): bool {
 		if ( isset( self::$registry[ $style_id ] ) ) {
+			return false;
+		}
+
+		if ( isset( self::$retained_persisted_identities[ $style_id ] ) ) {
 			return false;
 		}
 
@@ -914,7 +1097,7 @@ final class Style {
 	/**
 	 * Build a lookup map for selectors.
 	 *
-	 * @param array<string, array{selector: string}> $styles Source styles array.
+	 * @param array<array-key, array{selector: string}> $styles Source styles array.
 	 * @return array<string, true>
 	 */
 	private static function build_selector_map( array $styles ): array {

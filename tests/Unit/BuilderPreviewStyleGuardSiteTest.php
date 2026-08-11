@@ -18,7 +18,45 @@ use HonestlyDesign\EtchBuilders\EtchBlocks\ElementBlock;
 use HonestlyDesign\EtchBuilders\EtchBlocks\LoopBlock;
 use HonestlyDesign\EtchBuilders\LoopPreset;
 use HonestlyDesign\EtchBuilders\BuilderPreviewStyleGuard;
+use HonestlyDesign\EtchBuilders\Style;
 use PHPUnit\Framework\TestCase;
+
+/**
+ * Synthetic entity that links a mutable external class style by opaque ID.
+ */
+final class MutableExternalStyleEntity {
+
+	public static function build(): object {
+		$markup = ElementBlock::new()
+			->tag( 'div' )
+			->class( 'visual-class' )
+			->to_block()
+			->to_string();
+
+		return new class( $markup ) {
+			public function __construct( private string $markup ) {
+			}
+
+			public function get_blocks(): string {
+				return $this->markup;
+			}
+		};
+	}
+}
+
+/**
+ * Synthetic entity that directly references a persisted readonly numeric ID.
+ */
+final class NumericReadonlyStyleEntity {
+
+	public static function build(): object {
+		return new class {
+			public function get_blocks(): string {
+				return '<!-- wp:etch/element {"tag":"div","styles":["123"]} /-->';
+			}
+		};
+	}
+}
 
 /**
  * Verifies BuilderPreviewStyleGuard site-wide validation with synthetic entities.
@@ -92,6 +130,54 @@ final class BuilderPreviewStyleGuardSiteTest extends TestCase {
 		// which ClassStyleRegistry::ensure_registered_for_classes handles.
 		// There may be zero errors for a clean entity.
 		self::assertIsArray( $errors );
+	}
+
+	public function test_rule_a_accepts_a_linked_mutable_external_style_id(): void {
+		Environment::reset();
+		Style::reset();
+		ClassStyleRegistry::reset_cache();
+		Environment::storage()->set(
+			'etch_styles',
+			array(
+				'external-opaque-id' => array(
+					'selector'   => '.visual-class',
+					'collection' => 'User styles',
+					'css'        => 'color:green',
+					'type'       => 'class',
+					'readonly'   => false,
+				),
+			)
+		);
+
+		$errors = BuilderPreviewStyleGuard::validate_site(
+			array( array( MutableExternalStyleEntity::class, 'component' ) )
+		);
+
+		self::assertSame( array(), $errors );
+	}
+
+	public function test_rule_a_accepts_a_directly_referenced_readonly_numeric_opaque_id(): void {
+		Environment::reset();
+		Style::reset();
+		ClassStyleRegistry::reset_cache();
+		Environment::storage()->set(
+			'etch_styles',
+			array(
+				'123' => array(
+					'selector'   => '.external-behavior-hook',
+					'collection' => 'Upstream plugin',
+					'css'        => 'display:block',
+					'type'       => 'class',
+					'readonly'   => true,
+				),
+			)
+		);
+
+		$errors = BuilderPreviewStyleGuard::validate_site(
+			array( array( NumericReadonlyStyleEntity::class, 'component' ) )
+		);
+
+		self::assertSame( array(), $errors );
 	}
 
 	public function test_rule_g_fires_on_synthetic_component_with_unregistered_class_prop(): void {
