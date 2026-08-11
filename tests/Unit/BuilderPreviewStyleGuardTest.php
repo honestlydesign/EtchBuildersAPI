@@ -177,6 +177,38 @@ final class BuilderPreviewStyleGuardTest extends TestCase {
 		}
 	}
 
+	public function test_rule_g_passes_for_an_opaque_class_style_id_whose_selector_differs(): void {
+		$style_state = Style::snapshot_state();
+
+		try {
+			Style::reset();
+			Environment::reset();
+			ClassStyleRegistry::reset_cache();
+
+			Style::new()
+				->id( 'opaque-style-id' )
+				->selector( '.visual-class' )
+				->css( 'display:block' )
+				->type( 'class' )
+				->collection( 'User styles' )
+				->add();
+
+			$before = Style::snapshot_state();
+			$parsed = parse_blocks(
+				'<!-- wp:etch/component {"ref":1,"attributes":{"extraClass":"opaque-style-id"}} /-->'
+			);
+
+			$errors = BuilderPreviewStyleGuard::validate_component_class_props( $parsed );
+
+			self::assertSame( array(), $errors );
+			self::assertSame( $before, Style::snapshot_state() );
+		} finally {
+			ClassStyleRegistry::reset_cache();
+			Environment::reset();
+			Style::restore_state( $style_state );
+		}
+	}
+
 	public function test_rule_g_skips_dynamic_and_runtime_component_class_tokens(): void {
 		$parsed = parse_blocks(
 			'<!-- wp:etch/component {"ref":1,"attributes":{"extraClass":"{props.extra} rt-active"}} /-->'

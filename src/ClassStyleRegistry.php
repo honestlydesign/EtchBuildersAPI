@@ -391,6 +391,43 @@ final class ClassStyleRegistry {
 	}
 
 	/**
+	 * Require an opaque component class-property style ID without mutating styles.
+	 *
+	 * Component class properties reference Etch style IDs directly. Unlike HTML
+	 * class attributes, they must never resolve by selector or auto-register a
+	 * missing style. Request-local definitions take precedence over persistence.
+	 *
+	 * @param string $style_id Opaque Etch style ID.
+	 * @return string The unchanged style ID.
+	 * @throws \InvalidArgumentException When the ID is missing or is not a class style.
+	 */
+	public static function require_registered_class_style_id( string $style_id ): string {
+		if ( '' === $style_id || trim( $style_id ) !== $style_id ) {
+			throw new \InvalidArgumentException(
+				sprintf( 'Component class property style ID "%s" must be a registered Etch style ID.', $style_id )
+			);
+		}
+
+		$registered = Style::registered_styles();
+		if ( isset( $registered[ $style_id ] ) ) {
+			self::assert_class_style_entry( $style_id, $registered[ $style_id ] );
+
+			return $style_id;
+		}
+
+		$persisted = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
+		if ( ! is_array( $persisted ) || ! isset( $persisted[ $style_id ] ) || ! is_array( $persisted[ $style_id ] ) ) {
+			throw new \InvalidArgumentException(
+				sprintf( 'Component class property style ID "%s" is not registered in etch_styles.', $style_id )
+			);
+		}
+
+		self::assert_class_style_entry( $style_id, $persisted[ $style_id ] );
+
+		return $style_id;
+	}
+
+	/**
 	 * Clear cached selector lookups (for tests).
 	 */
 	public static function reset_cache(): void {
@@ -761,6 +798,34 @@ final class ClassStyleRegistry {
 		}
 
 		return self::is_standalone_class_selector( $style_selector );
+	}
+
+	/**
+	 * Require a style entry whose effective Etch type is class.
+	 *
+	 * Legacy persisted records may omit type, so infer class only from the same
+	 * simple-class selector shape used by Etch style normalization. Exact selector
+	 * validation for explicitly typed class records belongs to ClassStyleReference.
+	 *
+	 * @param string               $style_id Style ID used by the component prop.
+	 * @param array<string, mixed> $style    Registered or persisted style entry.
+	 * @throws \InvalidArgumentException When the effective type is not class.
+	 */
+	private static function assert_class_style_entry( string $style_id, array $style ): void {
+		$type = isset( $style['type'] ) && is_string( $style['type'] ) ? trim( $style['type'] ) : '';
+
+		if ( 'class' === $type ) {
+			return;
+		}
+
+		$selector = isset( $style['selector'] ) && is_string( $style['selector'] ) ? trim( $style['selector'] ) : '';
+		if ( '' === $type && self::is_standalone_class_selector( $selector ) ) {
+			return;
+		}
+
+		throw new \InvalidArgumentException(
+			sprintf( 'Component class property style ID "%s" must reference a type=class Etch style.', $style_id )
+		);
 	}
 
 	/**
