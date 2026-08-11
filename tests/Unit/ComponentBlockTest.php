@@ -230,6 +230,40 @@ final class ComponentBlockTest extends TestCase {
 		}
 	}
 
+	public function test_prop_class_rejects_an_explicit_class_style_with_a_compound_selector(): void {
+		$style_state = Style::snapshot_state();
+
+		try {
+			Style::reset();
+			Environment::reset();
+			ClassStyleRegistry::reset_cache();
+
+			Style::new()
+				->id( 'compound-style-id' )
+				->selector( '.card:hover' )
+				->css( 'color:red' )
+				->type( 'class' )
+				->add();
+
+			$before = Style::snapshot_state();
+
+			try {
+				ComponentBlock::new()
+					->ref( 1 )
+					->prop_class( 'classes', array( 'compound-style-id' ) );
+				self::fail( 'A compound selector must not be used as a component class-property style.' );
+			} catch ( InvalidArgumentException $exception ) {
+				self::assertStringContainsString( 'exactly one simple class selector', $exception->getMessage() );
+			}
+
+			self::assertSame( $before, Style::snapshot_state() );
+		} finally {
+			ClassStyleRegistry::reset_cache();
+			Environment::reset();
+			Style::restore_state( $style_state );
+		}
+	}
+
 	public function test_prop_class_passes_through_dynamic_token(): void {
 		$style_snapshot = Style::snapshot();
 

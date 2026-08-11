@@ -209,6 +209,39 @@ final class BuilderPreviewStyleGuardTest extends TestCase {
 		}
 	}
 
+	public function test_rule_g_rejects_an_explicit_class_style_with_a_compound_selector(): void {
+		$style_state = Style::snapshot_state();
+
+		try {
+			Style::reset();
+			Environment::reset();
+			ClassStyleRegistry::reset_cache();
+
+			Style::new()
+				->id( 'compound-style-id' )
+				->selector( '.card:hover' )
+				->css( 'color:red' )
+				->type( 'class' )
+				->add();
+
+			$before = Style::snapshot_state();
+			$parsed = parse_blocks(
+				'<!-- wp:etch/component {"ref":1,"attributes":{"extraClass":"compound-style-id"}} /-->'
+			);
+
+			$errors = BuilderPreviewStyleGuard::validate_component_class_props( $parsed );
+
+			self::assertCount( 1, $errors );
+			self::assertStringContainsString( 'Rule G', $errors[0] );
+			self::assertStringContainsString( 'compound-style-id', $errors[0] );
+			self::assertSame( $before, Style::snapshot_state() );
+		} finally {
+			ClassStyleRegistry::reset_cache();
+			Environment::reset();
+			Style::restore_state( $style_state );
+		}
+	}
+
 	public function test_rule_g_skips_dynamic_and_runtime_component_class_tokens(): void {
 		$parsed = parse_blocks(
 			'<!-- wp:etch/component {"ref":1,"attributes":{"extraClass":"{props.extra} rt-active"}} /-->'
