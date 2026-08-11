@@ -200,16 +200,15 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	/**
 	 * Set a class component prop.
 	 *
-	 * Tokens are resolved to canonical Etch style IDs before encoding,
-	 * matching what Etch's ClassProperty::resolve_value expects at render.
-	 * Dynamic tokens ({...}) and runtime tokens (rt-*) pass through untouched
-	 * in their original position; non-skipped tokens are validated and
-	 * auto-registered as type=class styles when missing.
+	 * Static values are opaque Etch style IDs and are looked up directly without
+	 * selector resolution, registration, or any other style mutation. Dynamic
+	 * values ({...}) and legacy runtime tokens (rt-*) retain their current
+	 * pass-through behavior for backwards compatibility.
 	 *
 	 * @param string             $key Prop key.
-	 * @param array<int, string> $class_names Class tokens to resolve to style IDs.
+	 * @param array<int, string> $class_names Style IDs or pass-through dynamic values.
 	 * @return self
-	 * @throws InvalidArgumentException When a non-dynamic, non-runtime token cannot resolve.
+	 * @throws InvalidArgumentException When a static value is not a registered class-style ID.
 	 */
 	public function prop_class( string $key, array $class_names ): self {
 		$resolved = array();
@@ -224,9 +223,7 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 				continue;
 			}
 
-			// ensure_registered_for_class throws InvalidArgumentException for tokens that
-			// cannot be used as style IDs (invalid chars) and auto-registers valid ones.
-			$resolved[] = ClassStyleRegistry::ensure_registered_for_class( $class_name );
+			$resolved[] = ClassStyleRegistry::require_registered_class_style_id( $class_name );
 		}
 
 		return $this->set_prop_value( $key, ComponentPropValueEncoder::class( $resolved ) );

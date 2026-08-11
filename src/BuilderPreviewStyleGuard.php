@@ -391,8 +391,9 @@ final class BuilderPreviewStyleGuard {
 					continue;
 				}
 
-				$style_id = ClassStyleRegistry::resolve_standalone_class_style_id( $token );
-				if ( null === $style_id ) {
+				try {
+					ClassStyleRegistry::require_registered_class_style_id( $token );
+				} catch ( \InvalidArgumentException $exception ) {
 					$errors[] = sprintf(
 						'Rule G: Component class prop "%s" token "%s" does not resolve to a type=class style in etch_styles.',
 						$key,
