@@ -46,6 +46,41 @@ final class SitePersistenceReport {
 		return $this->blocking_diagnostics;
 	}
 
+	/**
+	 * @return array<int, SitePersistenceResult>
+	 */
+	public function applied_results(): array {
+		return $this->filter_results( static fn ( SitePersistenceResult $result ): bool => $result->is_applied() );
+	}
+
+	/**
+	 * @return array<int, SitePersistenceResult>
+	 */
+	public function unchanged_results(): array {
+		return $this->filter_results( static fn ( SitePersistenceResult $result ): bool => $result->is_unchanged() );
+	}
+
+	/**
+	 * @return array<int, SitePersistenceResult>
+	 */
+	public function conflicted_results(): array {
+		return $this->filter_results( static fn ( SitePersistenceResult $result ): bool => $result->is_conflicted() );
+	}
+
+	/**
+	 * @return array<int, SitePersistenceResult>
+	 */
+	public function skipped_results(): array {
+		return $this->filter_results( static fn ( SitePersistenceResult $result ): bool => $result->is_skipped() );
+	}
+
+	/**
+	 * @return array<int, SitePersistenceResult>
+	 */
+	public function failed_results(): array {
+		return $this->filter_results( static fn ( SitePersistenceResult $result ): bool => $result->is_failed() );
+	}
+
 	public function was_blocked(): bool {
 		return array() !== $this->blocking_diagnostics;
 	}
@@ -62,6 +97,14 @@ final class SitePersistenceReport {
 		}
 
 		return true;
+	}
+
+	/**
+	 * @param callable(SitePersistenceResult): bool $predicate
+	 * @return array<int, SitePersistenceResult>
+	 */
+	private function filter_results( callable $predicate ): array {
+		return array_values( array_filter( $this->results, $predicate ) );
 	}
 
 	/**

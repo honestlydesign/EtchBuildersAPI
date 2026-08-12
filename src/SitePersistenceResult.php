@@ -56,6 +56,41 @@ final class SitePersistenceResult {
 	}
 
 	/**
+	 * Whether this result created or updated persisted state.
+	 */
+	public function is_applied(): bool {
+		return $this->outcome->is_applied();
+	}
+
+	/**
+	 * Whether this result found the persisted state already current.
+	 */
+	public function is_unchanged(): bool {
+		return $this->outcome->is_unchanged();
+	}
+
+	/**
+	 * Whether this result identifies an external ownership conflict.
+	 */
+	public function is_conflicted(): bool {
+		return $this->outcome->is_conflicted();
+	}
+
+	/**
+	 * Whether the adapter intentionally skipped this identity.
+	 */
+	public function is_skipped(): bool {
+		return $this->outcome->is_skipped();
+	}
+
+	/**
+	 * Whether persistence failed for this identity.
+	 */
+	public function is_failed(): bool {
+		return $this->outcome->is_failed();
+	}
+
+	/**
 	 * @return array{identity: string, outcome: string, code: string, message: string}
 	 */
 	public function to_array(): array {
