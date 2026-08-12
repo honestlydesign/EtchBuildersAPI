@@ -72,6 +72,17 @@ final class Javascript {
 		$normalized_base64    = self::normalize_base64_payload( $base64_script );
 		$placeholder          = self::build_placeholder( $normalized_script_id );
 
+		if ( isset( self::$registry[ $placeholder ] ) ) {
+			$existing_base64 = self::$registry[ $placeholder ]['base64'] ?? null;
+			if ( $existing_base64 === $normalized_base64 ) {
+				return $placeholder;
+			}
+
+			throw new InvalidArgumentException(
+				sprintf( 'JavaScript script id "%s" is already registered with a different payload.', $normalized_script_id )
+			);
+		}
+
 		self::$registry[ $placeholder ] = array(
 			'script_id' => $normalized_script_id,
 			'source'    => self::SOURCE_BASE64,
