@@ -43,6 +43,20 @@ final class Page extends AbstractContentBuilder {
 	}
 
 	/**
+	 * Return the configured page slug, when slug() was used.
+	 */
+	public function get_slug(): ?string {
+		return $this->slug;
+	}
+
+	/**
+	 * Return the configured page post ID, when id() was used.
+	 */
+	public function get_id(): ?int {
+		return $this->post_id;
+	}
+
+	/**
 	 * Target a page by slug.
 	 *
 	 * @param string $slug Page slug.
