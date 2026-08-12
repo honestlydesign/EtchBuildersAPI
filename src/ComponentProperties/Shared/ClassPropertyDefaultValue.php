@@ -93,17 +93,6 @@ final class ClassPropertyDefaultValue {
 	 * @throws InvalidArgumentException When current registry identity differs.
 	 */
 	private static function assert_reference_is_current( ClassStyleReference $reference ): void {
-		$current = ClassStyleReference::registered( $reference->id() );
-
-		if ( $current->selector() !== $reference->selector() ) {
-			throw new InvalidArgumentException(
-				sprintf(
-					'Class Style ID "%s" changed selector identity from "%s" to "%s".',
-					$reference->id(),
-					$reference->selector(),
-					$current->selector()
-				)
-			);
-		}
+		$reference->assert_current();
 	}
 }
