@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace HonestlyDesign\EtchBuilders;
 
 use HonestlyDesign\EtchBuilders\Support\AcyclicArrayGuard;
+use HonestlyDesign\EtchBuilders\Support\ImmutableArray;
 use InvalidArgumentException;
 
 /**
@@ -40,7 +41,7 @@ final class CompiledSiteResource {
 			throw new InvalidArgumentException( sprintf( 'Compiled Site resource identity must use the "%s:" namespace.', $type->value ) );
 		}
 		AcyclicArrayGuard::assert_acyclic( $payload );
-		$payload = self::freeze_payload( $payload );
+		$payload = ImmutableArray::copy( $payload, 'Compiled Site resource payload must contain only scalar, null, or nested array values.' );
 
 		return new self( $type, $identity, $payload );
 	}
@@ -71,27 +72,4 @@ final class CompiledSiteResource {
 		);
 	}
 
-	/**
-	 * Copy only immutable JSON-like values into the plan snapshot.
-	 *
-	 * @param array<string, mixed> $payload
-	 * @return array<string, mixed>
-	 */
-	private static function freeze_payload( array $payload ): array {
-		$frozen = array();
-		foreach ( $payload as $key => $value ) {
-			if ( is_array( $value ) ) {
-				$frozen[ $key ] = self::freeze_payload( $value );
-				continue;
-			}
-			if ( is_string( $value ) || is_int( $value ) || is_float( $value ) || is_bool( $value ) || null === $value ) {
-				$frozen[ $key ] = $value;
-				continue;
-			}
-
-			throw new InvalidArgumentException( 'Compiled Site resource payload must contain only scalar, null, or nested array values.' );
-		}
-
-		return $frozen;
-	}
 }
