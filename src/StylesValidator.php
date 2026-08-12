@@ -223,6 +223,55 @@ final class StylesValidator {
 	}
 
 	/**
+	 * Validate one explicitly classified global stylesheet fragment.
+	 *
+	 * Global categories are intentionally small. Framework CSS is allowed to
+	 * carry its own selectors; tokens, base rules, and fonts must not become a
+	 * second home for entity presentation classes. Utilities are the explicit
+	 * class-based global exception, while portal presentation enters through
+	 * PortalStyle rather than a raw category string.
+	 *
+	 * @param GlobalStyleCategory $category Fragment category.
+	 * @param string              $css      Fragment CSS.
+	 * @return array<int, string> Validation errors.
+	 */
+	public static function validate_global_fragment( GlobalStyleCategory $category, string $css ): array {
+		$css = trim( $css );
+		if ( '' === $css ) {
+			return array( 'Global stylesheet fragment CSS must be non-empty.' );
+		}
+
+		$clean = self::strip_css_comments_and_strings( $css );
+		if ( preg_match( '/@custom-media\b/i', $clean ) ) {
+			return array( 'Global stylesheet fragments cannot declare @custom-media. Use Stylesheet::register_custom_media().' );
+		}
+
+		if ( GlobalStyleCategory::PORTAL === $category ) {
+			return array( 'Portal fragments must be created through PortalStyle::new().' );
+		}
+
+		$has_class_selector = self::contains_class_selector( $clean );
+		if (
+			$has_class_selector
+			&& in_array( $category, array( GlobalStyleCategory::TOKENS, GlobalStyleCategory::BASE, GlobalStyleCategory::FONT ), true )
+		) {
+			return array(
+				'Entity presentation CSS belongs in an owner-local Style; use Stylesheet only for genuinely global concerns or an explicit utility/portal fragment.',
+			);
+		}
+
+		if ( GlobalStyleCategory::UTILITY === $category && ! $has_class_selector ) {
+			return array( 'The utility category requires at least one class selector.' );
+		}
+
+		if ( GlobalStyleCategory::FONT === $category && ! preg_match( '/@font-face\b/i', $clean ) ) {
+			return array( 'The font category requires an @font-face rule.' );
+		}
+
+		return array();
+	}
+
+	/**
 	 * Return a root at-rule when a caller supplies one where a selector is
 	 * expected. This small public seam is shared by checked selector escapes.
 	 *
@@ -264,6 +313,39 @@ final class StylesValidator {
 		}
 
 		return $balance;
+	}
+
+	/**
+	 * Determine whether CSS contains a class selector before a rule block.
+	 *
+	 * This deliberately ignores declaration values and quoted strings so a
+	 * token such as `--icon: .5rem` cannot be mistaken for entity CSS.
+	 *
+	 * @param string $content Comment/string-stripped CSS.
+	 */
+	private static function contains_class_selector( string $content ): bool {
+		$segment_start = 0;
+		$length        = strlen( $content );
+
+		for ( $position = 0; $position < $length; ++$position ) {
+			if ( '{' !== $content[ $position ] ) {
+				continue;
+			}
+
+			$prelude = substr( $content, $segment_start, $position - $segment_start );
+			$last_semicolon = strrpos( $prelude, ';' );
+			if ( false !== $last_semicolon ) {
+				$prelude = substr( $prelude, $last_semicolon + 1 );
+			}
+
+			if ( preg_match( '/\.[A-Za-z][A-Za-z0-9_-]*/', trim( $prelude ) ) ) {
+				return true;
+			}
+
+			$segment_start = $position + 1;
+		}
+
+		return false;
 	}
 
 	/**

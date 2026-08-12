@@ -105,6 +105,13 @@ final class Stylesheet {
 	private bool $has_css = false;
 
 	/**
+	 * Whether this builder already contains a checked global fragment.
+	 *
+	 * Raw setter calls cannot replace a checked chain after this point.
+	 */
+	private bool $has_checked_global_fragments = false;
+
+	/**
 	 * Whether existing persisted stylesheets may be overwritten.
 	 *
 	 * @var bool
@@ -172,13 +179,37 @@ final class Stylesheet {
 	}
 
 	/**
-	 * Set stylesheet CSS directly.
+	 * Set stylesheet CSS directly as a raw compatibility escape.
+	 *
+	 * Prefer global_fragment() for new code so entity presentation CSS cannot
+	 * silently move into a global stylesheet.
 	 *
 	 * @param string $css Stylesheet CSS.
 	 */
 	public function css( string $css ): self {
+		if ( $this->has_checked_global_fragments ) {
+			throw new InvalidArgumentException( 'Cannot replace checked global fragments with raw stylesheet CSS.' );
+		}
+
 		$this->css     = $css;
 		$this->has_css = true;
+
+		return $this;
+	}
+
+	/**
+	 * Append a checked global stylesheet fragment.
+	 *
+	 * @param GlobalStyleFragment $fragment Explicitly classified global CSS.
+	 */
+	public function global_fragment( GlobalStyleFragment $fragment ): self {
+		$fragment_css = $fragment->css();
+
+		$this->css = '' === trim( $this->css )
+			? $fragment_css
+			: rtrim( $this->css ) . "\n" . $fragment_css;
+		$this->has_css                    = true;
+		$this->has_checked_global_fragments = true;
 
 		return $this;
 	}
@@ -204,7 +235,7 @@ final class Stylesheet {
 	}
 
 	/**
-	 * Load stylesheet CSS from a file.
+	 * Load raw stylesheet CSS from a file as a compatibility escape.
 	 *
 	 * @param string $file_path CSS file path.
 	 * @throws InvalidArgumentException When the file path is empty.
