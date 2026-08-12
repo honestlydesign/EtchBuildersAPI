@@ -1,27 +1,27 @@
 parameters:
 	ignoreErrors:
 		-
-			message: "#^Cannot access property \\$ID on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$ID on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/ComponentRegistrar.php
 
 		-
-			message: "#^Cannot access property \\$post_content on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$post_content on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/ComponentRegistrar.php
 
 		-
-			message: "#^Cannot access property \\$post_excerpt on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$post_excerpt on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/ComponentRegistrar.php
 
 		-
-			message: "#^Cannot access property \\$post_name on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$post_name on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/ComponentRegistrar.php
 
 		-
-			message: "#^Cannot access property \\$post_title on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$post_title on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/ComponentRegistrar.php
 
@@ -41,17 +41,17 @@ parameters:
 			path: src/Content/AbstractContentBuilder.php
 
 		-
-			message: "#^Parameter \\#1 \\$object_or_class of function property_exists expects object\\|string, array\\<int\\|string, mixed\\>\\|WP_Post given\\.$#"
+			message: "#^Parameter \\#1 \\$object_or_class of function property_exists expects object\\|string, array(?:\\<int\\|string, mixed\\>)?\\|WP_Post given\\.$#"
 			count: 1
 			path: src/Content/ContentPostRegistrar.php
 
 		-
-			message: "#^Cannot access property \\$ID on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$ID on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/EtchBlocks/ComponentRegistry.php
 
 		-
-			message: "#^Cannot access property \\$post_type on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$post_type on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/EtchBlocks/ComponentRegistry.php
 
@@ -61,12 +61,12 @@ parameters:
 			path: src/EtchBlocks/ComponentRegistry.php
 
 		-
-			message: "#^Cannot access property \\$ID on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$ID on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/Page.php
 
 		-
-			message: "#^Cannot access property \\$post_type on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$post_type on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/Page.php
 
@@ -81,27 +81,27 @@ parameters:
 			path: src/Page.php
 
 		-
-			message: "#^Cannot access property \\$ID on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$ID on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/PatternRegistrar.php
 
 		-
-			message: "#^Cannot access property \\$post_content on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$post_content on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/PatternRegistrar.php
 
 		-
-			message: "#^Cannot access property \\$post_excerpt on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$post_excerpt on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/PatternRegistrar.php
 
 		-
-			message: "#^Cannot access property \\$post_name on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$post_name on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/PatternRegistrar.php
 
 		-
-			message: "#^Cannot access property \\$post_title on array\\<int\\|string, mixed\\>\\|WP_Post\\.$#"
+			message: "#^Cannot access property \\$post_title on array(?:\\<int\\|string, mixed\\>)?\\|WP_Post\\.$#"
 			count: 1
 			path: src/PatternRegistrar.php
 
