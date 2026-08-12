@@ -43,7 +43,7 @@ final class CompiledSiteDiagnostic {
 		}
 		if ( null !== $identity ) {
 			$identity = trim( $identity );
-			if ( 1 !== preg_match( '/^[a-z][a-z0-9_-]*:[A-Za-z0-9][A-Za-z0-9_.-]*$/D', $identity ) ) {
+			if ( 1 !== preg_match( '/^[a-z][a-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_.-]*)+$/D', $identity ) ) {
 				throw new InvalidArgumentException( 'Compiled Site diagnostic identity must be a stable type:key value.' );
 			}
 		}

@@ -67,7 +67,7 @@ final class CompiledSiteEntity {
 
 	private static function validate_identity( string $identity, CompiledSiteEntityType $type ): string {
 		$identity = trim( $identity );
-		if ( 1 !== preg_match( '/^[a-z][a-z0-9_-]*:[A-Za-z0-9][A-Za-z0-9_.-]*$/D', $identity ) ) {
+		if ( 1 !== preg_match( '/^[a-z][a-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_.-]*)+$/D', $identity ) ) {
 			throw new InvalidArgumentException( 'Compiled Site Entity identity must be a stable type:key value.' );
 		}
 		if ( ! str_starts_with( $identity, $type->value . ':' ) ) {
