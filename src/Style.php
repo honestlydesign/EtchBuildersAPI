@@ -47,7 +47,7 @@ final class Style {
 	 * Style identities claimed during the current request, including registry entries
 	 * later evicted because another ID took ownership of the same selector.
 	 *
-	 * @var array<array-key, array{selector: string, type: string}>
+	 * @var array<array-key, array{selector: string, type: string, collection: string}>
 	 */
 	private static array $claimed_identities = array();
 
@@ -57,7 +57,7 @@ final class Style {
 	 * Retention prevents legacy orphan cleanup without importing, adopting, or
 	 * rewriting the persisted definition through the request-local registry.
 	 *
-	 * @var array<array-key, array{selector: string, type: string}>
+	 * @var array<array-key, array{selector: string, type: string, collection: string}>
 	 */
 	private static array $retained_persisted_identities = array();
 
@@ -258,8 +258,9 @@ final class Style {
 		}
 
 		self::$claimed_identities[ $style_id ] = array(
-			'selector' => $selector,
-			'type'     => $resolved_type,
+			'selector'   => $selector,
+			'type'       => $resolved_type,
+			'collection' => $style['collection'],
 		);
 
 		self::remove_registry_selector_conflicts( $style_id, $selector );
@@ -462,8 +463,8 @@ final class Style {
 	 *
 	 * @return array{
 	 *     registry: array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
-	 *     claimed_identities: array<array-key, array{selector: string, type: string}>,
-	 *     retained_persisted_identities: array<array-key, array{selector: string, type: string}>
+	 *     claimed_identities: array<array-key, array{selector: string, type: string, collection: string}>,
+	 *     retained_persisted_identities: array<array-key, array{selector: string, type: string, collection: string}>
 	 * }
 	 */
 	public static function snapshot_state(): array {
@@ -488,8 +489,9 @@ final class Style {
 
 		foreach ( $registry as $style_id => $style ) {
 			self::$claimed_identities[ (string) $style_id ] = array(
-				'selector' => $style['selector'],
-				'type'     => $style['type'],
+				'selector'   => $style['selector'],
+				'type'       => $style['type'],
+				'collection' => $style['collection'],
 			);
 		}
 	}
@@ -499,8 +501,8 @@ final class Style {
 	 *
 	 * @param array{
 	 *     registry: array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
-	 *     claimed_identities: array<array-key, array{selector: string, type: string}>,
-	 *     retained_persisted_identities?: array<array-key, array{selector: string, type: string}>
+	 *     claimed_identities: array<array-key, array{selector: string, type: string, collection: string}>,
+	 *     retained_persisted_identities?: array<array-key, array{selector: string, type: string, collection: string}>
 	 * } $state Complete style state snapshot.
 	 */
 	public static function restore_state( array $state ): void {
@@ -532,10 +534,15 @@ final class Style {
 		}
 
 		self::assert_style_identity_matches_persisted( $style_id, $selector, $type, $persisted );
+		$persisted_style = $persisted[ $style_id ];
+		$collection      = is_array( $persisted_style ) && isset( $persisted_style['collection'] ) && is_string( $persisted_style['collection'] )
+			? $persisted_style['collection']
+			: '';
 
 		self::$retained_persisted_identities[ $style_id ] = array(
-			'selector' => $selector,
-			'type'     => $type,
+			'selector'   => $selector,
+			'type'       => $type,
+			'collection' => $collection,
 		);
 	}
 
@@ -559,6 +566,33 @@ final class Style {
 	 */
 	public static function registered_styles(): array {
 		return self::$registry;
+	}
+
+	/**
+	 * Remove one exact owner's request-local collection before atomic replacement.
+	 *
+	 * @internal EntityStyleSet owns the public replacement operation.
+	 */
+	public static function forget_registered_collection( string $collection ): void {
+		foreach ( self::$registry as $style_id => $style ) {
+			if ( $collection !== $style['collection'] ) {
+				continue;
+			}
+
+			unset( self::$registry[ $style_id ] );
+		}
+
+		foreach ( self::$claimed_identities as $style_id => $identity ) {
+			if ( $collection === $identity['collection'] ) {
+				unset( self::$claimed_identities[ $style_id ] );
+			}
+		}
+
+		foreach ( self::$retained_persisted_identities as $style_id => $identity ) {
+			if ( $collection === $identity['collection'] ) {
+				unset( self::$retained_persisted_identities[ $style_id ] );
+			}
+		}
 	}
 
 	/**
@@ -593,7 +627,7 @@ final class Style {
 
 		$matching_ids = array_keys( $matches );
 		if ( 1 === count( $matching_ids ) ) {
-			return $matching_ids[0];
+			return (string) $matching_ids[0];
 		}
 
 		if ( count( $matching_ids ) > 1 ) {

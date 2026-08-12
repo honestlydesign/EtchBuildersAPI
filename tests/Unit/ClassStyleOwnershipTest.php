@@ -28,8 +28,8 @@ final class ClassStyleOwnershipTest extends TestCase {
 	/**
 	 * @var array{
 	 *     registry: array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
-	 *     claimed_identities: array<array-key, array{selector: string, type: string}>,
-	 *     retained_persisted_identities: array<array-key, array{selector: string, type: string}>
+ *     claimed_identities: array<array-key, array{selector: string, type: string, collection: string}>,
+ *     retained_persisted_identities: array<array-key, array{selector: string, type: string, collection: string}>
 	 * }
 	 */
 	private array $style_state;
