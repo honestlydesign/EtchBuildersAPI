@@ -9,8 +9,6 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders;
 
-use HonestlyDesign\EtchBuilders\EtchBlocks\ElementBlock;
-
 /**
  * Demonstrates a typed component definition through SiteDefinition::compile.
  */
@@ -18,10 +16,6 @@ final class CoreComponentAuthoringRecipe extends AbstractAuthoringCapabilityReci
 
 	private const RECIPE_ID = 'recipe.site.component';
 	private const VERSION   = '1.0';
-	private const COMPONENT = 'Hero';
-	private const DESCRIPTION = 'Hero component';
-	private const TAG       = 'section';
-	private const CONTENT   = 'Welcome to the site.';
 
 	public function id(): string {
 		return self::RECIPE_ID;
@@ -40,24 +34,25 @@ final class CoreComponentAuthoringRecipe extends AbstractAuthoringCapabilityReci
 	}
 
 	public function inputs(): array {
+		$component = self::build_component();
+
 		return array(
-			'component_key' => self::COMPONENT,
-			'description'   => self::DESCRIPTION,
-			'tag'           => self::TAG,
-			'content'       => self::CONTENT,
+			'component_key' => $component->get_key(),
+			'description'   => $component->get_description(),
+			'tag'           => CoreAuthoringRecipeFixtures::hero_tag(),
+			'content'       => CoreAuthoringRecipeFixtures::content(),
 		);
 	}
 
-	protected function build(): SiteDefinition {
-		$component = Component::new( self::COMPONENT, self::DESCRIPTION )
-			->key( self::COMPONENT )
-			->blocks(
-				ElementBlock::new()
-					->tag( self::TAG )
-					->content( self::CONTENT )
-			);
+	/**
+	 * Return the exact typed component fixture reused by composite recipes.
+	 */
+	public static function build_component(): Component {
+		return CoreAuthoringRecipeFixtures::hero_component();
+	}
 
-		return SiteDefinition::new()->component( $component );
+	protected function build(): SiteDefinition {
+		return SiteDefinition::new()->component( self::build_component() );
 	}
 
 	public function expected_outcomes(): AuthoringRecipeExpectation {

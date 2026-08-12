@@ -9,8 +9,6 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders;
 
-use HonestlyDesign\EtchBuilders\EtchBlocks\TextBlock;
-
 /**
  * Demonstrates a typed page through SiteDefinition::compile.
  */
@@ -18,8 +16,6 @@ final class CorePageAuthoringRecipe extends AbstractAuthoringCapabilityRecipe {
 
 	private const RECIPE_ID = 'recipe.site.page';
 	private const VERSION   = '1.0';
-	private const SLUG      = 'home';
-	private const CONTENT   = 'Welcome to the site.';
 
 	public function id(): string {
 		return self::RECIPE_ID;
@@ -38,18 +34,23 @@ final class CorePageAuthoringRecipe extends AbstractAuthoringCapabilityRecipe {
 	}
 
 	public function inputs(): array {
+		$page = self::build_page();
+
 		return array(
-			'slug'    => self::SLUG,
-			'content' => self::CONTENT,
+			'slug'    => $page->get_slug(),
+			'content' => CoreAuthoringRecipeFixtures::content(),
 		);
 	}
 
-	protected function build(): SiteDefinition {
-		$page = Page::new()
-			->slug( self::SLUG )
-			->block( TextBlock::new()->content( self::CONTENT ) );
+	/**
+	 * Return the exact typed page fixture reused by composite recipes.
+	 */
+	public static function build_page(): Page {
+		return CoreAuthoringRecipeFixtures::home_page();
+	}
 
-		return SiteDefinition::new()->page( $page );
+	protected function build(): SiteDefinition {
+		return SiteDefinition::new()->page( self::build_page() );
 	}
 
 	public function expected_outcomes(): AuthoringRecipeExpectation {
