@@ -67,6 +67,11 @@ final class Block {
 	private array $class_tokens;
 
 	/**
+	 * Checked raw fragment metadata, when this block was created from one.
+	 */
+	private ?RawFragment $raw_fragment;
+
+	/**
 	 * Child blocks.
 	 *
 	 * @var array<int, self>
@@ -79,10 +84,11 @@ final class Block {
 	 * @param string               $name Block name with or without etch/ prefix.
 	 * @param array<string, mixed> $attributes Block attributes.
 	 * @param array<int, ClassToken> $class_tokens Explicit non-wire class metadata.
+	 * @param RawFragment|null      $raw_fragment Checked raw fragment metadata.
 	 * @throws InvalidArgumentException When block name, attributes, or class metadata are invalid.
 	 */
-	public static function new( string $name, array $attributes = array(), array $class_tokens = array() ): self {
-		return new self( $name, $attributes, false, false, $class_tokens );
+	public static function new( string $name, array $attributes = array(), array $class_tokens = array(), ?RawFragment $raw_fragment = null ): self {
+		return new self( $name, $attributes, false, false, $class_tokens, $raw_fragment );
 	}
 
 	/**
@@ -91,10 +97,11 @@ final class Block {
 	 * @param string               $name Block name with or without etch/ prefix.
 	 * @param array<string, mixed> $attributes Block attributes.
 	 * @param array<int, ClassToken> $class_tokens Explicit non-wire class metadata.
+	 * @param RawFragment|null      $raw_fragment Checked raw fragment metadata.
 	 * @throws InvalidArgumentException When block name, attributes, or class metadata are invalid.
 	 */
-	public static function new_self_closing( string $name, array $attributes = array(), array $class_tokens = array() ): self {
-		return new self( $name, $attributes, true, false, $class_tokens );
+	public static function new_self_closing( string $name, array $attributes = array(), array $class_tokens = array(), ?RawFragment $raw_fragment = null ): self {
+		return new self( $name, $attributes, true, false, $class_tokens, $raw_fragment );
 	}
 
 	/**
@@ -172,6 +179,28 @@ final class Block {
 	}
 
 	/**
+	 * Return checked raw fragment metadata attached to this block, if any.
+	 */
+	public function raw_fragment(): ?RawFragment {
+		return $this->raw_fragment;
+	}
+
+	/**
+	 * Return checked raw fragments attached throughout this block tree.
+	 *
+	 * @return array<int, RawFragment>
+	 */
+	public function children_raw_fragments(): array {
+		$fragments = null !== $this->raw_fragment ? array( $this->raw_fragment ) : array();
+
+		foreach ( $this->children as $child ) {
+			$fragments = array_merge( $fragments, $child->children_raw_fragments() );
+		}
+
+		return $fragments;
+	}
+
+	/**
 	 * Return explicit class declarations from this complete block tree.
 	 *
 	 * @return array<int, ClassToken>
@@ -243,6 +272,7 @@ final class Block {
 	 * @param array<string, mixed> $attributes Block attributes.
 	 * @param bool                 $self_closing Whether the block is self-closing.
 	 * @param array<int, ClassToken> $class_tokens Explicit non-wire class metadata.
+	 * @param RawFragment|null      $raw_fragment Checked raw fragment metadata.
 	 * @throws InvalidArgumentException When block name or class metadata is invalid.
 	 */
 	private function __construct(
@@ -250,7 +280,8 @@ final class Block {
 		array $attributes,
 		bool $self_closing,
 		bool $is_core_block = false,
-		array $class_tokens = array()
+		array $class_tokens = array(),
+		?RawFragment $raw_fragment = null
 	) {
 		self::assert_attribute_keys( $attributes );
 
@@ -258,6 +289,10 @@ final class Block {
 		$this->self_closing = $self_closing;
 		$this->name         = $is_core_block ? self::normalize_core_block_name( $name ) : self::normalize_block_name( $name );
 		$this->class_tokens = self::validate_class_tokens( $class_tokens, $attributes );
+		if ( null !== $raw_fragment && ( 'etch/raw-html' !== $this->name || ! $self_closing ) ) {
+			throw new InvalidArgumentException( 'Checked RawFragment metadata is only valid on self-closing etch/raw-html blocks.' );
+		}
+		$this->raw_fragment = $raw_fragment;
 	}
 
 	/**

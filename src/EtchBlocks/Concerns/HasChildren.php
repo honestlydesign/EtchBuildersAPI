@@ -11,6 +11,7 @@ namespace HonestlyDesign\EtchBuilders\EtchBlocks\Concerns;
 
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\Block;
+use HonestlyDesign\EtchBuilders\RawFragment;
 use HonestlyDesign\EtchBuilders\EtchBlocks\RawHtmlBlock;
 use HonestlyDesign\EtchBuilders\EtchBlocks\TextBlock;
 
@@ -58,6 +59,17 @@ trait HasChildren {
 	 */
 	public function raw_content( string $content ): static {
 		$this->children[] = RawHtmlBlock::new()->content( $content )->to_block();
+		return $this;
+	}
+
+	/**
+	 * Add a checked narrow raw HTML fragment as a child.
+	 *
+	 * @param RawFragment $fragment Checked fragment with a required rationale.
+	 * @return static
+	 */
+	public function raw_fragment( RawFragment $fragment ): static {
+		$this->children[] = RawHtmlBlock::new()->fragment( $fragment )->to_block();
 		return $this;
 	}
 

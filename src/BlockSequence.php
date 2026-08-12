@@ -126,4 +126,18 @@ final class BlockSequence {
 
 		return $class_tokens;
 	}
+
+	/**
+	 * Return checked raw fragments attached throughout the sequence.
+	 *
+	 * @return array<int, RawFragment>
+	 */
+	public function raw_fragments(): array {
+		$fragments = array();
+		foreach ( $this->blocks as $block ) {
+			$fragments = array_merge( $fragments, $block->children_raw_fragments() );
+		}
+
+		return $fragments;
+	}
 }
