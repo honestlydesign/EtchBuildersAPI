@@ -54,6 +54,8 @@ final class ContractLabSnapshot {
 	}
 
 	public static function from_candidate( ContractLabCandidateObservation $candidate ): self {
+		// This is a disposable canonical candidate value. Only the explicit
+		// CompatibilityWorkflow::accept() action promotes it to accepted truth.
 		return self::from_payload( $candidate->semantic_projection() );
 	}
 

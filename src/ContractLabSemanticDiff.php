@@ -24,8 +24,20 @@ final class ContractLabSemanticDiff {
 	}
 
 	public static function compare( ContractLabCandidateObservation $before, ContractLabCandidateObservation $after ): self {
+		return self::compare_payloads( $before->semantic_projection(), $after->semantic_projection() );
+	}
+
+	public static function compare_snapshots( ContractLabSnapshot $before, ContractLabSnapshot $after ): self {
+		return self::compare_payloads( $before->payload(), $after->payload() );
+	}
+
+	/**
+	 * @param array<string, mixed> $before_payload
+	 * @param array<string, mixed> $after_payload
+	 */
+	private static function compare_payloads( array $before_payload, array $after_payload ): self {
 		$changes = array();
-		self::compare_values( $before->semantic_projection(), $after->semantic_projection(), '', $changes );
+		self::compare_values( $before_payload, $after_payload, '', $changes );
 
 		return new self( array() === $changes ? 'unchanged' : 'changed', $changes );
 	}

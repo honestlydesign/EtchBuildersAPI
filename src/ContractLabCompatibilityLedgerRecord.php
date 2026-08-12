@@ -54,23 +54,27 @@ final class ContractLabCompatibilityLedgerRecord {
 		array $environment,
 		string $classification,
 		ContractLabSnapshot $accepted_snapshot,
-		array $evidence
+		array $evidence,
+		?ContractLabCompatibilityReview $review = null
 	): self {
-		return self::from_array(
-			array(
-				'record_version'           => self::RECORD_VERSION,
-				'record_id'                => $record_id,
-				'builder_contract_version' => $builder_contract_version,
-				'builder_source_revision'  => $builder_source_revision,
-				'etch_release'             => $etch_release,
-				'artifact_fingerprint'     => $artifact_fingerprint,
-				'environment'              => $environment,
-				'classification'           => $classification,
-				'accepted_snapshot_version' => $accepted_snapshot->snapshot_version(),
-				'accepted_snapshot_digest'  => $accepted_snapshot->digest(),
-				'evidence'                 => $evidence,
-			)
+		$record = array(
+			'record_version'            => self::RECORD_VERSION,
+			'record_id'                 => $record_id,
+			'builder_contract_version'  => $builder_contract_version,
+			'builder_source_revision'   => $builder_source_revision,
+			'etch_release'              => $etch_release,
+			'artifact_fingerprint'      => $artifact_fingerprint,
+			'environment'               => $environment,
+			'classification'            => $classification,
+			'accepted_snapshot_version' => $accepted_snapshot->snapshot_version(),
+			'accepted_snapshot_digest'  => $accepted_snapshot->digest(),
+			'evidence'                  => $evidence,
 		);
+		if ( null !== $review ) {
+			$record['review'] = $review->to_array();
+		}
+
+		return self::from_array( $record );
 	}
 
 	/**
@@ -80,9 +84,7 @@ final class ContractLabCompatibilityLedgerRecord {
 	 */
 	public static function from_array( array $record ): self {
 		AcyclicArrayGuard::assert_acyclic( $record );
-		self::assert_exact_keys(
-			$record,
-			array(
+		$expected_keys = array(
 				'artifact_fingerprint',
 				'accepted_snapshot_digest',
 				'accepted_snapshot_version',
@@ -94,9 +96,11 @@ final class ContractLabCompatibilityLedgerRecord {
 				'evidence',
 				'record_id',
 				'record_version',
-			),
-			'Contract Lab compatibility ledger record'
 		);
+		if ( array_key_exists( 'review', $record ) ) {
+			$expected_keys[] = 'review';
+		}
+		self::assert_exact_keys( $record, $expected_keys, 'Contract Lab compatibility ledger record' );
 
 		$strings = array(
 			'record_version',
@@ -146,6 +150,16 @@ final class ContractLabCompatibilityLedgerRecord {
 			throw new ContractLabObservationException( 'malformed', 'Contract Lab ledger evidence must be an ordered list.' );
 		}
 		$evidence = self::normalize_evidence( $evidence );
+		$review   = null;
+		if ( array_key_exists( 'review', $record ) ) {
+			if ( ! is_array( $record['review'] ) ) {
+				throw new ContractLabObservationException( 'malformed', 'Contract Lab ledger review must be an object.' );
+			}
+			$review = ContractLabCompatibilityReview::from_array( $record['review'] );
+			if ( $review->classification() !== $record['classification'] ) {
+				throw new ContractLabObservationException( 'malformed', 'Contract Lab ledger review classification must match the ledger classification.' );
+			}
+		}
 
 		$canonical = array(
 			'record_version'            => self::RECORD_VERSION,
@@ -160,6 +174,9 @@ final class ContractLabCompatibilityLedgerRecord {
 			'accepted_snapshot_digest'  => $record['accepted_snapshot_digest'],
 			'evidence'                  => $evidence,
 		);
+		if ( null !== $review ) {
+			$canonical['review'] = $review->to_array();
+		}
 
 		return new self( $canonical );
 	}
@@ -178,6 +195,14 @@ final class ContractLabCompatibilityLedgerRecord {
 
 	public function accepted_snapshot_digest(): string {
 		return $this->record['accepted_snapshot_digest'];
+	}
+
+	public function review(): ?ContractLabCompatibilityReview {
+		if ( ! isset( $this->record['review'] ) ) {
+			return null;
+		}
+
+		return ContractLabCompatibilityReview::from_array( $this->record['review'] );
 	}
 
 	/**
