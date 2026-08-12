@@ -167,7 +167,7 @@ final class DynamicElementBlock implements EtchBlockBuilderInterface {
 			$block_attrs['styles'] = $this->styles;
 		}
 
-		$block = Block::new( 'dynamic-element', $block_attrs );
+		$block = Block::new( 'dynamic-element', $block_attrs, $this->explicit_class_tokens() );
 
 		foreach ( $this->children as $child ) {
 			$block->add_child( $child );

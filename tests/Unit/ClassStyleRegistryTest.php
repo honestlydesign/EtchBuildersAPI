@@ -64,6 +64,33 @@ final class ClassStyleRegistryTest extends TestCase {
 		);
 	}
 
+	public function test_class_token_collection_preserves_non_html_whitespace_in_both_parser_paths(): void {
+		$token  = "foo\x0Bbar";
+		$markup = ElementBlock::new()
+			->tag( 'div' )
+			->class_token( \HonestlyDesign\EtchBuilders\ClassToken::project_utility( $token ) )
+			->to_block()
+			->to_string();
+
+		$fallback = new \ReflectionMethod( ClassStyleRegistry::class, 'collect_class_tokens_from_markup_regex' );
+
+		self::assertSame( array( $token ), ClassStyleRegistry::collect_class_tokens_from_blocks_markup( $markup ) );
+		self::assertSame( array( $token ), $fallback->invoke( null, $markup ) );
+	}
+
+	public function test_class_token_fallback_decodes_escaped_json_quotes(): void {
+		$token  = 'framework"hook';
+		$markup = ElementBlock::new()
+			->tag( 'div' )
+			->class_token( \HonestlyDesign\EtchBuilders\ClassToken::external_framework( $token, 'Framework' ) )
+			->to_block()
+			->to_string();
+
+		$fallback = new \ReflectionMethod( ClassStyleRegistry::class, 'collect_class_tokens_from_markup_regex' );
+
+		self::assertSame( array( $token ), $fallback->invoke( null, $markup ) );
+	}
+
 	public function test_compound_only_style_triggers_standalone_alias(): void {
 		$style_snapshot = Style::snapshot();
 

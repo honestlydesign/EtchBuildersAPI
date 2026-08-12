@@ -204,7 +204,7 @@ final class SvgBlock implements EtchBlockBuilderInterface {
 			$block_attrs['styles'] = $this->styles;
 		}
 
-		$block = Block::new( 'svg', $block_attrs );
+		$block = Block::new( 'svg', $block_attrs, $this->explicit_class_tokens() );
 
 		foreach ( $this->children as $child ) {
 			$block->add_child( $child );

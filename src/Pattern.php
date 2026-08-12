@@ -10,6 +10,8 @@ declare(strict_types=1);
 namespace HonestlyDesign\EtchBuilders;
 
 use InvalidArgumentException;
+use HonestlyDesign\EtchBuilders\Contracts\ClassTokenMetadataProviderInterface;
+use HonestlyDesign\EtchBuilders\EtchBlocks\Contracts\EtchBlockBuilderInterface;
 use HonestlyDesign\EtchBuilders\Support\BlocksInputPathGuard;
 use RuntimeException;
 
@@ -25,7 +27,7 @@ use RuntimeException;
  *     ->blocks($markup)
  *     ->register();
  */
-final class Pattern {
+final class Pattern implements ClassTokenMetadataProviderInterface {
 	/**
 	 * Pattern display name.
 	 *
@@ -53,6 +55,13 @@ final class Pattern {
 	 * @var string
 	 */
 	private string $blocks = '';
+
+	/**
+	 * Non-wire class ownership retained when blocks are supplied structurally.
+	 *
+	 * @var array<int, ClassToken>
+	 */
+	private array $class_tokens = array();
 
 	/**
 	 * Pattern category slugs/names.
@@ -134,21 +143,29 @@ final class Pattern {
 	/**
 	 * Set the blocks markup.
 	 *
-	 * @param string $blocks Raw Gutenberg HTML or local file path.
+	 * @param string|Block|EtchBlockBuilderInterface $blocks Raw markup/path or a structured block.
 	 * @throws RuntimeException When the local file cannot be read.
 	 */
-	public function blocks( string $blocks ): self {
-		$this->blocks = $this->resolve_blocks_input( $blocks );
+	public function blocks( string|Block|EtchBlockBuilderInterface $blocks ): self {
+		if ( is_string( $blocks ) ) {
+			$this->blocks       = $this->resolve_blocks_input( $blocks );
+			$this->class_tokens = array();
+			return $this;
+		}
+
+		$block              = $blocks instanceof EtchBlockBuilderInterface ? $blocks->to_block() : $blocks;
+		$this->blocks       = $block->to_string();
+		$this->class_tokens = $block->class_tokens_in_tree();
 		return $this;
 	}
 
 	/**
 	 * Alias for blocks().
 	 *
-	 * @param string $blocks_or_path Raw Gutenberg HTML or local file path.
+	 * @param string|Block|EtchBlockBuilderInterface $blocks_or_path Raw markup/path or a structured block.
 	 * @throws RuntimeException When the local file cannot be read.
 	 */
-	public function add_blocks( string $blocks_or_path ): self {
+	public function add_blocks( string|Block|EtchBlockBuilderInterface $blocks_or_path ): self {
 		return $this->blocks( $blocks_or_path );
 	}
 
@@ -178,6 +195,15 @@ final class Pattern {
 	 */
 	public function get_blocks(): string {
 		return $this->blocks;
+	}
+
+	/**
+	 * Return explicit non-wire class declarations from structured blocks.
+	 *
+	 * @return array<int, ClassToken>
+	 */
+	public function get_class_tokens(): array {
+		return $this->class_tokens;
 	}
 
 	/**

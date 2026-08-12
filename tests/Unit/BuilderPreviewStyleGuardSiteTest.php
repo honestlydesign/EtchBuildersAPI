@@ -13,11 +13,14 @@ declare( strict_types=1 );
 namespace HonestlyDesign\EtchBuilders\Tests\Unit;
 
 use HonestlyDesign\EtchBuilders\ClassStyleRegistry;
+use HonestlyDesign\EtchBuilders\ClassStyleReference;
+use HonestlyDesign\EtchBuilders\ClassToken;
 use HonestlyDesign\EtchBuilders\Environment;
 use HonestlyDesign\EtchBuilders\EtchBlocks\ElementBlock;
 use HonestlyDesign\EtchBuilders\EtchBlocks\LoopBlock;
 use HonestlyDesign\EtchBuilders\LoopPreset;
 use HonestlyDesign\EtchBuilders\BuilderPreviewStyleGuard;
+use HonestlyDesign\EtchBuilders\Page;
 use HonestlyDesign\EtchBuilders\Style;
 use PHPUnit\Framework\TestCase;
 
@@ -55,6 +58,28 @@ final class NumericReadonlyStyleEntity {
 				return '<!-- wp:etch/element {"tag":"div","styles":["123"]} /-->';
 			}
 		};
+	}
+}
+
+/**
+ * Synthetic structured entity mixing one Etch style with an external class.
+ */
+final class ExplicitFrameworkProvenanceEntity {
+
+	public static function build(): object {
+		Style::new()
+			->id( 'opaque-panel-id' )
+			->selector( '.panel' )
+			->css( 'display: grid' )
+			->type( 'class' )
+			->add();
+
+		return Page::new()->block(
+			ElementBlock::new()
+				->tag( 'div' )
+				->class_style( ClassStyleReference::registered( 'opaque-panel-id' ) )
+				->class_token( ClassToken::external_framework( 'grid', 'ACSS' ) )
+		);
 	}
 }
 
@@ -175,6 +200,14 @@ final class BuilderPreviewStyleGuardSiteTest extends TestCase {
 
 		$errors = BuilderPreviewStyleGuard::validate_site(
 			array( array( NumericReadonlyStyleEntity::class, 'component' ) )
+		);
+
+		self::assertSame( array(), $errors );
+	}
+
+	public function test_validate_site_consumes_structured_non_site_provenance_without_claiming_it_as_an_etch_style(): void {
+		$errors = BuilderPreviewStyleGuard::validate_site(
+			array( array( ExplicitFrameworkProvenanceEntity::class, 'page' ) )
 		);
 
 		self::assertSame( array(), $errors );

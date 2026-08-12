@@ -12,7 +12,9 @@ namespace HonestlyDesign\EtchBuilders;
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\ComponentProperties\Contracts\ComponentPropertyInterface;
 use HonestlyDesign\EtchBuilders\ComponentProperties\Shared\PropertySerializationTransaction;
+use HonestlyDesign\EtchBuilders\Contracts\ClassTokenMetadataProviderInterface;
 use HonestlyDesign\EtchBuilders\Environment;
+use HonestlyDesign\EtchBuilders\EtchBlocks\Contracts\EtchBlockBuilderInterface;
 use HonestlyDesign\EtchBuilders\Support\BlocksInputPathGuard;
 use RuntimeException;
 
@@ -26,7 +28,7 @@ use RuntimeException;
  *     ->blocks($markup)
  *     ->register();
  */
-final class Component {
+final class Component implements ClassTokenMetadataProviderInterface {
 	/**
 	 * Component display name.
 	 *
@@ -54,6 +56,13 @@ final class Component {
 	 * @var string
 	 */
 	private string $blocks = '';
+
+	/**
+	 * Non-wire class ownership retained when blocks are supplied structurally.
+	 *
+	 * @var array<int, ClassToken>
+	 */
+	private array $class_tokens = array();
 
 	/**
 	 * Properties keyed by prop key.
@@ -143,11 +152,19 @@ final class Component {
 	/**
 	 * Set the blocks markup.
 	 *
-	 * @param string $blocks Raw Gutenberg HTML or local file path.
+	 * @param string|Block|EtchBlockBuilderInterface $blocks Raw markup/path or a structured block.
 	 * @throws RuntimeException When the local file cannot be read.
 	 */
-	public function blocks( string $blocks ): self {
-		$this->blocks = $this->resolve_blocks_input( $blocks );
+	public function blocks( string|Block|EtchBlockBuilderInterface $blocks ): self {
+		if ( is_string( $blocks ) ) {
+			$this->blocks       = $this->resolve_blocks_input( $blocks );
+			$this->class_tokens = array();
+			return $this;
+		}
+
+		$block              = $blocks instanceof EtchBlockBuilderInterface ? $blocks->to_block() : $blocks;
+		$this->blocks       = $block->to_string();
+		$this->class_tokens = $block->class_tokens_in_tree();
 		return $this;
 	}
 
@@ -222,6 +239,15 @@ final class Component {
 	 */
 	public function get_blocks(): string {
 		return $this->blocks;
+	}
+
+	/**
+	 * Return explicit non-wire class declarations from structured blocks.
+	 *
+	 * @return array<int, ClassToken>
+	 */
+	public function get_class_tokens(): array {
+		return $this->class_tokens;
 	}
 
 	/**

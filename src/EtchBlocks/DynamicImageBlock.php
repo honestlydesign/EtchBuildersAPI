@@ -187,6 +187,6 @@ final class DynamicImageBlock implements EtchBlockBuilderInterface {
 			$block_attrs['styles'] = $this->styles;
 		}
 
-		return Block::new_self_closing( 'dynamic-image', $block_attrs );
+		return Block::new_self_closing( 'dynamic-image', $block_attrs, $this->explicit_class_tokens() );
 	}
 }

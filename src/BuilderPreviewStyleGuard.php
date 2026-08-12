@@ -11,6 +11,7 @@ namespace HonestlyDesign\EtchBuilders;
 
 use HonestlyDesign\EtchBuilders\ComponentProperties\ComponentClassPropertyGuard;
 use HonestlyDesign\EtchBuilders\Content\AbstractContentBuilder;
+use HonestlyDesign\EtchBuilders\Contracts\ClassTokenMetadataProviderInterface;
 use ReflectionClass;
 /**
  * Crosswalks StylesParser IDs with serialized block attrs.styles for Etch preview parity.
@@ -99,6 +100,7 @@ final class BuilderPreviewStyleGuard {
 			$parser_paths    = array();
 			$all_referenced  = array();
 			$all_class_tokens = array();
+			$non_site_class_tokens = array();
 			$blocks_markups  = array();
 
 			foreach ( $entities as $entry ) {
@@ -130,13 +132,22 @@ final class BuilderPreviewStyleGuard {
 					ClassStyleRegistry::collect_class_tokens_from_blocks_markup( $blocks_markup )
 				);
 				$blocks_markups[]    = $blocks_markup;
+				if ( $builder instanceof ClassTokenMetadataProviderInterface ) {
+					foreach ( $builder->get_class_tokens() as $class_token ) {
+						if ( ClassProvenance::SITE_PRESENTATION !== $class_token->provenance() ) {
+							$non_site_class_tokens[] = $class_token->token();
+						}
+					}
+				}
 
 				foreach ( self::discover_styles_parser_paths( $class_name ) as $css_path ) {
 					$parser_paths[ $css_path ] = true;
 				}
 			}
 
-			ClassStyleRegistry::ensure_registered_for_classes( $all_class_tokens );
+			$non_site_class_tokens = array_values( array_unique( $non_site_class_tokens ) );
+			$etch_class_tokens     = array_values( array_diff( $all_class_tokens, $non_site_class_tokens ) );
+			ClassStyleRegistry::ensure_registered_for_classes( $etch_class_tokens );
 			self::ensure_registered_for_referenced_class_style_ids( $all_referenced );
 
 			$all_referenced = array_values( array_unique( $all_referenced ) );
@@ -229,7 +240,7 @@ final class BuilderPreviewStyleGuard {
 			ClassStyleRegistry::reset_cache();
 			$selector_to_id = ClassStyleRegistry::selector_to_id_map();
 
-			foreach ( array_unique( $all_class_tokens ) as $class_token ) {
+			foreach ( array_unique( $etch_class_tokens ) as $class_token ) {
 				if ( ClassStyleRegistry::should_skip_class_token( $class_token ) ) {
 					continue;
 				}
@@ -247,11 +258,11 @@ final class BuilderPreviewStyleGuard {
 					$parsed = parse_blocks( $blocks_markup );
 					$errors = array_merge(
 						$errors,
-						self::collect_class_linkage_errors_from_blocks( $parsed, $selector_to_id )
+						self::collect_class_linkage_errors_from_blocks( $parsed, $selector_to_id, $non_site_class_tokens )
 					);
 					$errors = array_merge(
 						$errors,
-						self::collect_standalone_class_linkage_errors_from_blocks( $parsed )
+						self::collect_standalone_class_linkage_errors_from_blocks( $parsed, $non_site_class_tokens )
 					);
 					$errors = array_merge(
 						$errors,
@@ -621,9 +632,13 @@ final class BuilderPreviewStyleGuard {
 	 * Collect Rule F errors from parsed blocks.
 	 *
 	 * @param array<int|string, array<string, mixed>> $blocks Parsed blocks.
+	 * @param array<int, string>                      $ignored_class_tokens Explicit non-Etch class tokens.
 	 * @return array<int, string>
 	 */
-	private static function collect_standalone_class_linkage_errors_from_blocks( array $blocks ): array {
+	private static function collect_standalone_class_linkage_errors_from_blocks(
+		array $blocks,
+		array $ignored_class_tokens = array()
+	): array {
 		$errors = array();
 
 		foreach ( $blocks as $block ) {
@@ -631,12 +646,15 @@ final class BuilderPreviewStyleGuard {
 				continue;
 			}
 
-			$errors = array_merge( $errors, ClassStyleRegistry::validate_block_standalone_class_linkage( $block ) );
+			$errors = array_merge(
+				$errors,
+				ClassStyleRegistry::validate_block_standalone_class_linkage( $block, $ignored_class_tokens )
+			);
 
 			if ( ! empty( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ) {
 				$errors = array_merge(
 					$errors,
-					self::collect_standalone_class_linkage_errors_from_blocks( $block['innerBlocks'] )
+					self::collect_standalone_class_linkage_errors_from_blocks( $block['innerBlocks'], $ignored_class_tokens )
 				);
 			}
 		}
@@ -649,9 +667,14 @@ final class BuilderPreviewStyleGuard {
 	 *
 	 * @param array<int|string, array<string, mixed>> $blocks           Parsed blocks.
 	 * @param array<string, string>                   $selector_to_id_map Selector to style ID map.
+	 * @param array<int, string>                      $ignored_class_tokens Explicit non-Etch class tokens.
 	 * @return array<int, string>
 	 */
-	private static function collect_class_linkage_errors_from_blocks( array $blocks, array $selector_to_id_map ): array {
+	private static function collect_class_linkage_errors_from_blocks(
+		array $blocks,
+		array $selector_to_id_map,
+		array $ignored_class_tokens = array()
+	): array {
 		$errors = array();
 
 		foreach ( $blocks as $block ) {
@@ -661,13 +684,17 @@ final class BuilderPreviewStyleGuard {
 
 			$errors = array_merge(
 				$errors,
-				ClassStyleRegistry::validate_block_class_style_linkage( $block, $selector_to_id_map )
+				ClassStyleRegistry::validate_block_class_style_linkage( $block, $selector_to_id_map, $ignored_class_tokens )
 			);
 
 			if ( ! empty( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ) {
 				$errors = array_merge(
 					$errors,
-					self::collect_class_linkage_errors_from_blocks( $block['innerBlocks'], $selector_to_id_map )
+					self::collect_class_linkage_errors_from_blocks(
+						$block['innerBlocks'],
+						$selector_to_id_map,
+						$ignored_class_tokens
+					)
 				);
 			}
 		}
