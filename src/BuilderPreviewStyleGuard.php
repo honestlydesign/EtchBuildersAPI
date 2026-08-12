@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders;
 
+use HonestlyDesign\EtchBuilders\ComponentProperties\ComponentClassPropertyGuard;
 use HonestlyDesign\EtchBuilders\Content\AbstractContentBuilder;
 use ReflectionClass;
 /**
@@ -329,82 +330,18 @@ final class BuilderPreviewStyleGuard {
 	}
 
 	/**
-	 * Validate Rule G: component class prop tokens must resolve to type=class styles.
-	 *
-	 * Walks etch/component blocks. For each attributes key ending in `class`,
-	 * splits the space-delimited value into tokens and asserts each non-dynamic,
-	 * non-runtime token resolves to a registered type=class style.
+	 * Validate Rule G through exact catalog-derived component class-property paths.
 	 *
 	 * @param array<int|string, array<string, mixed>> $blocks Parsed blocks.
 	 * @return array<int, string> Validation error messages.
 	 */
 	public static function validate_component_class_props( array $blocks ): array {
-		$errors = array();
+		$guard = new ComponentClassPropertyGuard(
+			Environment::component_contracts()->catalog(),
+			Environment::ref_resolver()
+		);
 
-		foreach ( $blocks as $block ) {
-			if ( ! is_array( $block ) ) {
-				continue;
-			}
-
-			$block_name = $block['blockName'] ?? '';
-			if ( 'etch/component' === $block_name ) {
-				$errors = array_merge( $errors, self::check_component_class_props( $block ) );
-			}
-
-			if ( ! empty( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ) {
-				$errors = array_merge( $errors, self::validate_component_class_props( $block['innerBlocks'] ) );
-			}
-		}
-
-		return $errors;
-	}
-
-	/**
-	 * Check one component block's class-typed props.
-	 *
-	 * @param array<string, mixed> $block Parsed component block.
-	 * @return array<int, string>
-	 */
-	private static function check_component_class_props( array $block ): array {
-		$errors = array();
-
-		$attrs = $block['attrs'] ?? null;
-		if ( ! is_array( $attrs ) ) {
-			return $errors;
-		}
-
-		$attributes = $attrs['attributes'] ?? null;
-		if ( ! is_array( $attributes ) ) {
-			return $errors;
-		}
-
-		foreach ( $attributes as $key => $value ) {
-			if ( ! is_string( $key ) || ! str_ends_with( strtolower( $key ), 'class' ) ) {
-				continue;
-			}
-
-			if ( ! is_string( $value ) || '' === trim( $value ) ) {
-				continue;
-			}
-
-			foreach ( ClassStyleRegistry::split_class_tokens( $value ) as $token ) {
-				if ( ClassStyleRegistry::should_skip_class_token( $token ) ) {
-					continue;
-				}
-
-				try {
-					ClassStyleRegistry::require_registered_class_style_id( $token );
-				} catch ( \InvalidArgumentException $exception ) {
-					$errors[] = sprintf(
-						'Rule G: Component class prop "%s" token "%s" does not resolve to a type=class style in etch_styles.',
-						$key,
-						$token
-					);
-				}
-			}
-		}
-
-		return $errors;
+		return $guard->validate( $blocks );
 	}
 
 	/**

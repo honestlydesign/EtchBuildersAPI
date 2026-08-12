@@ -180,39 +180,6 @@ final class BuilderPreviewStyleGuardSiteTest extends TestCase {
 		self::assertSame( array(), $errors );
 	}
 
-	public function test_rule_g_fires_on_synthetic_component_with_unregistered_class_prop(): void {
-		Environment::reset();
-		ClassStyleRegistry::reset_cache();
-
-		// Synthetic component block with a class prop token not registered.
-		$parsed = array(
-			array(
-				'blockName'   => 'etch/component',
-				'attrs'       => array(
-					'ref'        => 1,
-					'attributes' => array(
-						'extraClass' => 'totally-unknown-class',
-					),
-				),
-				'innerBlocks' => array(),
-				'innerHTML'   => '',
-				'innerContent' => array(),
-			),
-		);
-
-		$errors = BuilderPreviewStyleGuard::validate_component_class_props( $parsed );
-
-		self::assertNotEmpty( $errors );
-		$found = false;
-		foreach ( $errors as $error ) {
-			if ( str_contains( $error, 'Rule G' ) && str_contains( $error, 'totally-unknown-class' ) ) {
-				$found = true;
-				break;
-			}
-		}
-		self::assertTrue( $found, 'Rule G must flag the unregistered component class prop.' );
-	}
-
 	public function test_rule_i_fires_on_synthetic_loop_with_unregistered_loopId(): void {
 		Environment::reset();
 		LoopPreset::reset();

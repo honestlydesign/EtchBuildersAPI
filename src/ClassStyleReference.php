@@ -35,14 +35,24 @@ final class ClassStyleReference {
 	private string $selector;
 
 	/**
+	 * Whether the effective style record explicitly declares type=class.
+	 *
+	 * Legacy persisted records without a type remain referenceable for backward
+	 * compatibility, but Etch component class properties require this proof.
+	 */
+	private bool $has_explicit_class_type;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param string $id Opaque Etch style ID.
 	 * @param string $selector Validated simple class selector.
+	 * @param bool   $has_explicit_class_type Whether the effective record declares type=class.
 	 */
-	private function __construct( string $id, string $selector ) {
-		$this->id       = $id;
-		$this->selector = $selector;
+	private function __construct( string $id, string $selector, bool $has_explicit_class_type ) {
+		$this->id                      = $id;
+		$this->selector                = $selector;
+		$this->has_explicit_class_type = $has_explicit_class_type;
 	}
 
 	/**
@@ -118,7 +128,7 @@ final class ClassStyleReference {
 			);
 		}
 
-		return new self( $style_id, $selector );
+		return new self( $style_id, $selector, $has_type && 'class' === $type );
 	}
 
 	/**
@@ -133,6 +143,16 @@ final class ClassStyleReference {
 	 */
 	public function selector(): string {
 		return $this->selector;
+	}
+
+	/**
+	 * Whether Etch can consume this reference through a component ClassProperty.
+	 *
+	 * Missing-type legacy records remain readable through registered(), but Etch
+	 * only emits component class styles whose record explicitly has type=class.
+	 */
+	public function has_explicit_class_type(): bool {
+		return $this->has_explicit_class_type;
 	}
 
 	/**
