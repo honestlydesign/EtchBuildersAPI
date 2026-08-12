@@ -64,6 +64,8 @@ final class SiteDefinition {
 
 	/**
 	 * Create an empty Site Definition.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public static function new(): self {
 		return new self();
@@ -71,6 +73,8 @@ final class SiteDefinition {
 
 	/**
 	 * Add one explicitly keyed component.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function component( Component $component ): self {
 		$key = trim( $component->get_key() );
@@ -84,6 +88,8 @@ final class SiteDefinition {
 
 	/**
 	 * Add one explicitly keyed pattern.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function pattern( Pattern $pattern ): self {
 		$key = trim( $pattern->get_key() );
@@ -97,6 +103,8 @@ final class SiteDefinition {
 
 	/**
 	 * Add one page identified by its configured slug or post ID.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function page( Page $page ): self {
 		$identity = $this->page_identity( $page );
@@ -106,6 +114,8 @@ final class SiteDefinition {
 
 	/**
 	 * Add one post identified by its configured slug/type or post ID.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function post( Post $post ): self {
 		$identity = $this->post_identity( $post );
@@ -115,6 +125,8 @@ final class SiteDefinition {
 
 	/**
 	 * Add one active-theme template identified by slug.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function template( Template $template ): self {
 		$slug = trim( (string) $template->get_slug() );
@@ -129,6 +141,8 @@ final class SiteDefinition {
 	/**
 	 * Add one known supporting definition.
 	 *
+	 * @authoring-contract-version 1.0
+	 *
 	 * @param LoopPreset|EntityStyleSet|ComponentContractCatalog $definition Supporting value.
 	 */
 	public function supporting( LoopPreset|EntityStyleSet|ComponentContractCatalog $definition ): self {
@@ -139,6 +153,8 @@ final class SiteDefinition {
 
 	/**
 	 * Add one global stylesheet or file-based JavaScript asset.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function global_asset( StylesheetReference|JavascriptAsset $asset ): self {
 		$identity = $this->global_asset_identity( $asset );
@@ -149,6 +165,8 @@ final class SiteDefinition {
 
 	/**
 	 * Set the explicit front-page policy.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function home_page( SiteHomePolicy $policy ): self {
 		$this->home_page_policy = $policy;
@@ -220,6 +238,8 @@ final class SiteDefinition {
 
 	/**
 	 * Compile identities and dependencies without performing WordPress writes.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function compile( ?\HonestlyDesign\EtchBuilders\Contracts\SiteRuntimeCapabilitiesInterface $runtime = null ): CompiledSitePlan {
 		return SiteCompiler::compile( $this, $runtime );
