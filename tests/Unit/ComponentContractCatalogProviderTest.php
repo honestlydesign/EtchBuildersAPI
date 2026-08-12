@@ -74,6 +74,8 @@ final class ComponentContractCatalogProviderTest extends TestCase {
 			'components' => array(
 				array(
 					'class_property_paths' => $component['class_property_paths'],
+					'recipe_ids'           => $component['recipe_ids'],
+					'status'               => $component['status'],
 					'slots'                => $component['slots'],
 					'properties'           => $component['properties'],
 					'component_key'        => $component['component_key'],
@@ -111,14 +113,19 @@ final class ComponentContractCatalogProviderTest extends TestCase {
 	}
 
 	public function test_accepted_provider_snapshots_input_state(): void {
-		$payload  = $this->catalog()->to_array();
+		$recipe_id = 'component.feature-card';
+		$payload   = $this->catalog()->to_array();
+		$payload['components'][0]['status']        = 'supported';
+		$payload['components'][0]['recipe_ids'][0] =& $recipe_id;
 		$provider = AcceptedComponentContractCatalogProvider::from_array( $payload );
 
 		$payload['components'][0]['properties'][0]['default'] = 'changed';
 		$payload['components'][0]['slots'][0]                 = 'changed';
+		$recipe_id                                            = 'invalid recipe ID';
 
 		self::assertSame( 'Hello', $provider->catalog()->contract( 'FeatureCard' )->property_by_value_path( 'title' )->default_value() );
 		self::assertSame( array( 'default', 'actions' ), $provider->catalog()->contract( 'FeatureCard' )->slots() );
+		self::assertSame( array( 'component.feature-card' ), $provider->catalog()->contract( 'FeatureCard' )->recipe_ids() );
 	}
 
 	public function test_accepted_provider_does_not_write_through_caller_owned_references(): void {
@@ -324,15 +331,15 @@ final class ComponentContractCatalogProviderTest extends TestCase {
 			'scalar root' => array( 'true', 'JSON object with a components field' ),
 			'object components' => array( '{"components":{}}', 'components must be a JSON list' ),
 			'object properties' => array(
-				'{"components":[{"component_key":"Empty","properties":{},"slots":[],"class_property_paths":[]}]}',
+				'{"components":[{"component_key":"Empty","properties":{},"slots":[],"class_property_paths":[],"status":"pending","recipe_ids":[]}]}',
 				'properties must be a JSON list',
 			),
 			'object slots' => array(
-				'{"components":[{"component_key":"Empty","properties":[],"slots":{},"class_property_paths":[]}]}',
+				'{"components":[{"component_key":"Empty","properties":[],"slots":{},"class_property_paths":[],"status":"pending","recipe_ids":[]}]}',
 				'slots must be a JSON list',
 			),
 			'object class paths' => array(
-				'{"components":[{"component_key":"Empty","properties":[],"slots":[],"class_property_paths":{}}]}',
+				'{"components":[{"component_key":"Empty","properties":[],"slots":[],"class_property_paths":{},"status":"pending","recipe_ids":[]}]}',
 				'class_property_paths must be a JSON list',
 			),
 			'numeric object default' => array( $numeric_object_value, 'canonical model projection without object/list substitutions' ),

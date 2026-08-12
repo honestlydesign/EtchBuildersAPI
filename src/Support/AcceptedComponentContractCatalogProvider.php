@@ -177,7 +177,7 @@ final class AcceptedComponentContractCatalogProvider implements ComponentContrac
 				throw new InvalidArgumentException( 'Accepted catalog components must be JSON objects.' );
 			}
 
-			foreach ( array( 'properties', 'slots', 'class_property_paths' ) as $list_field ) {
+			foreach ( array( 'properties', 'slots', 'class_property_paths', 'recipe_ids' ) as $list_field ) {
 				if ( ! property_exists( $component, $list_field ) || ! is_array( $component->{$list_field} ) ) {
 					throw new InvalidArgumentException( sprintf( 'Accepted component %s must be a JSON list.', $list_field ) );
 				}
