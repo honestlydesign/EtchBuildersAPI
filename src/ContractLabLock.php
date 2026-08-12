@@ -108,6 +108,13 @@ final class ContractLabLock {
 	}
 
 	/**
+	 * Whether this lock instance still owns its OS lock handle.
+	 */
+	public function is_active(): bool {
+		return is_resource( $this->handle );
+	}
+
+	/**
 	 * @return array{lock_version: string, owner_id: string, pid: int, started_at: int, stale_after_seconds: int}
 	 */
 	public function metadata(): array {
