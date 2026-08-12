@@ -145,6 +145,15 @@ final class ContractLabManifestSafety {
 	}
 
 	/**
+	 * Validate a content fingerprint without accepting a path or opaque blob.
+	 */
+	public static function assert_digest( string $value, string $label ): void {
+		if ( 1 !== preg_match( '/^(?:sha256:)?[a-f0-9]{64}$/D', $value ) ) {
+			throw new InvalidArgumentException( sprintf( '%s must be a lowercase SHA-256 digest.', $label ) );
+		}
+	}
+
+	/**
 	 * Reject sensitive or proprietary material before it reaches a manifest
 	 * projection. Typed fields provide the main boundary; this is a final
 	 * content guard for identifiers and constraints.
