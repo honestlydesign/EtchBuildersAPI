@@ -12,7 +12,7 @@ namespace HonestlyDesign\EtchBuilders;
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\ComponentProperties\Contracts\ComponentPropertyInterface;
 use HonestlyDesign\EtchBuilders\ComponentProperties\Shared\PropertySerializationTransaction;
-use HonestlyDesign\EtchBuilders\Contracts\ClassTokenMetadataProviderInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SiteEntityCompilerMetadataInterface;
 use HonestlyDesign\EtchBuilders\Environment;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Contracts\EtchBlockBuilderInterface;
 use HonestlyDesign\EtchBuilders\Support\BlocksInputPathGuard;
@@ -28,7 +28,7 @@ use RuntimeException;
  *     ->blocks($markup)
  *     ->register();
  */
-final class Component implements ClassTokenMetadataProviderInterface {
+final class Component implements SiteEntityCompilerMetadataInterface {
 	/**
 	 * Component display name.
 	 *
@@ -75,6 +75,13 @@ final class Component implements ClassTokenMetadataProviderInterface {
 	 * @var array<string, ComponentPropertyInterface>
 	 */
 	private array $properties = array();
+
+	/**
+	 * Style IDs declared through this component's typed style methods.
+	 *
+	 * @var array<int, string>
+	 */
+	private array $style_ids = array();
 
 	/**
 	 * Global stylesheet references declared by this component.
@@ -272,6 +279,22 @@ final class Component implements ClassTokenMetadataProviderInterface {
 	}
 
 	/**
+	 * Return a detached typed block tree for compiler checks.
+	 */
+	public function get_block_sequence(): ?BlockSequence {
+		return null !== $this->block_sequence ? $this->block_sequence->copy() : null;
+	}
+
+	/**
+	 * Return checked raw fragments retained by the typed block tree.
+	 *
+	 * @return array<int, RawFragment>
+	 */
+	public function get_raw_fragments(): array {
+		return null !== $this->block_sequence ? $this->block_sequence->raw_fragments() : array();
+	}
+
+	/**
 	 * Return registered Pattern dependencies nested in this Component.
 	 *
 	 * @return array<int, PatternUse>
@@ -309,6 +332,24 @@ final class Component implements ClassTokenMetadataProviderInterface {
 	}
 
 	/**
+	 * Return style IDs declared through add_style() or add_class_prop_style().
+	 *
+	 * @return array<int, string>
+	 */
+	public function get_style_ids(): array {
+		return $this->style_ids;
+	}
+
+	/**
+	 * Return stylesheet references without registering them.
+	 *
+	 * @return array<int, StylesheetReference>
+	 */
+	public function get_stylesheet_references(): array {
+		return $this->stylesheet_references;
+	}
+
+	/**
 	 * Add a style scoped to this component.
 	 *
 	 * Styles are editable (not readonly) by default, matching the Etch runtime
@@ -320,7 +361,9 @@ final class Component implements ClassTokenMetadataProviderInterface {
 	 * @return string Registered style id.
 	 */
 	public function add_style( Style $style ): string {
-		return $style->add();
+		$style_id          = $style->add();
+		$this->style_ids[] = $style_id;
+		return $style_id;
 	}
 
 	/**
@@ -333,7 +376,9 @@ final class Component implements ClassTokenMetadataProviderInterface {
 	 * @return string Registered style id.
 	 */
 	public function add_class_prop_style( Style $style ): string {
-		return $style->add();
+		$style_id          = $style->add();
+		$this->style_ids[] = $style_id;
+		return $style_id;
 	}
 
 	/**

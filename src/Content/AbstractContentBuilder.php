@@ -13,7 +13,7 @@ use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\Block;
 use HonestlyDesign\EtchBuilders\BlockSequence;
 use HonestlyDesign\EtchBuilders\ClassToken;
-use HonestlyDesign\EtchBuilders\Contracts\ClassTokenMetadataProviderInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SiteEntityCompilerMetadataInterface;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Contracts\EtchBlockBuilderInterface;
 use HonestlyDesign\EtchBuilders\Javascript;
 use HonestlyDesign\EtchBuilders\RegistrationResult;
@@ -27,7 +27,7 @@ use RuntimeException;
 /**
  * Provides common content, ownership, title, and status behavior.
  */
-abstract class AbstractContentBuilder implements ClassTokenMetadataProviderInterface {
+abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInterface {
 
 	/**
 	 * Allowed post statuses.
@@ -91,6 +91,13 @@ abstract class AbstractContentBuilder implements ClassTokenMetadataProviderInter
 	 * @var array<int, StylesheetReference>
 	 */
 	private array $stylesheet_references = array();
+
+	/**
+	 * Style IDs declared through this content builder.
+	 *
+	 * @var array<int, string>
+	 */
+	private array $style_ids = array();
 
 	/**
 	 * Constructor.
@@ -212,7 +219,9 @@ abstract class AbstractContentBuilder implements ClassTokenMetadataProviderInter
 	 * @return string Registered style id.
 	 */
 	public function add_style( Style $style ): string {
-		return $style->overwrite_on_register( true )->add();
+		$style_id          = $style->overwrite_on_register( true )->add();
+		$this->style_ids[] = $style_id;
+		return $style_id;
 	}
 
 	/**
@@ -281,6 +290,40 @@ abstract class AbstractContentBuilder implements ClassTokenMetadataProviderInter
 	 */
 	public function get_class_tokens(): array {
 		return $this->content->class_tokens();
+	}
+
+	/**
+	 * Return a detached typed content sequence when structured content is active.
+	 */
+	public function get_block_sequence(): ?BlockSequence {
+		return $this->content->block_sequence();
+	}
+
+	/**
+	 * Return checked raw fragments retained by structured content.
+	 *
+	 * @return array<int, \HonestlyDesign\EtchBuilders\RawFragment>
+	 */
+	public function get_raw_fragments(): array {
+		return $this->content->raw_fragments();
+	}
+
+	/**
+	 * Return style IDs declared through add_style().
+	 *
+	 * @return array<int, string>
+	 */
+	public function get_style_ids(): array {
+		return $this->style_ids;
+	}
+
+	/**
+	 * Return stylesheet references without registering them.
+	 *
+	 * @return array<int, StylesheetReference>
+	 */
+	public function get_stylesheet_references(): array {
+		return $this->stylesheet_references;
 	}
 
 	/**

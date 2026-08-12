@@ -10,7 +10,7 @@ declare(strict_types=1);
 namespace HonestlyDesign\EtchBuilders;
 
 use InvalidArgumentException;
-use HonestlyDesign\EtchBuilders\Contracts\ClassTokenMetadataProviderInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SiteEntityCompilerMetadataInterface;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Contracts\EtchBlockBuilderInterface;
 use HonestlyDesign\EtchBuilders\Support\BlocksInputPathGuard;
 use RuntimeException;
@@ -27,7 +27,7 @@ use RuntimeException;
  *     ->blocks($markup)
  *     ->register();
  */
-final class Pattern implements ClassTokenMetadataProviderInterface {
+final class Pattern implements SiteEntityCompilerMetadataInterface {
 	/**
 	 * Pattern display name.
 	 *
@@ -74,6 +74,13 @@ final class Pattern implements ClassTokenMetadataProviderInterface {
 	 * @var array<int, string>
 	 */
 	private array $categories = array();
+
+	/**
+	 * Style IDs declared through this pattern's typed style method.
+	 *
+	 * @var array<int, string>
+	 */
+	private array $style_ids = array();
 
 	/**
 	 * Global stylesheet references declared by this pattern.
@@ -236,6 +243,15 @@ final class Pattern implements ClassTokenMetadataProviderInterface {
 	}
 
 	/**
+	 * Return checked raw fragments retained by the typed block tree.
+	 *
+	 * @return array<int, RawFragment>
+	 */
+	public function get_raw_fragments(): array {
+		return null !== $this->block_sequence ? $this->block_sequence->raw_fragments() : array();
+	}
+
+	/**
 	 * Return registered Pattern dependencies nested in this Pattern.
 	 *
 	 * @return array<int, PatternUse>
@@ -263,6 +279,24 @@ final class Pattern implements ClassTokenMetadataProviderInterface {
 	}
 
 	/**
+	 * Return style IDs declared through add_style().
+	 *
+	 * @return array<int, string>
+	 */
+	public function get_style_ids(): array {
+		return $this->style_ids;
+	}
+
+	/**
+	 * Return stylesheet references without registering them.
+	 *
+	 * @return array<int, StylesheetReference>
+	 */
+	public function get_stylesheet_references(): array {
+		return $this->stylesheet_references;
+	}
+
+	/**
 	 * Add a style scoped to this pattern.
 	 *
 	 * Pattern styles are plugin-owned and overwrite DB state on sync, but they
@@ -272,7 +306,9 @@ final class Pattern implements ClassTokenMetadataProviderInterface {
 	 * @return string Registered style id.
 	 */
 	public function add_style( Style $style ): string {
-		return $style->overwrite_on_register( true )->add();
+		$style_id          = $style->overwrite_on_register( true )->add();
+		$this->style_ids[] = $style_id;
+		return $style_id;
 	}
 
 	/**

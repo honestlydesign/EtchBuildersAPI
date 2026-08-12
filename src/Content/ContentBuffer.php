@@ -168,11 +168,27 @@ final class ContentBuffer {
 	}
 
 	/**
+	 * Return a detached typed sequence when structured content is active.
+	 */
+	public function block_sequence(): ?BlockSequence {
+		return self::MODE_BLOCKS === $this->mode ? $this->blocks->copy() : null;
+	}
+
+	/**
 	 * Return registered Pattern dependencies retained by structured content.
 	 *
 	 * @return array<int, PatternUse>
 	 */
 	public function pattern_uses(): array {
 		return $this->blocks->pattern_uses();
+	}
+
+	/**
+	 * Return checked raw fragments retained by structured content.
+	 *
+	 * @return array<int, \HonestlyDesign\EtchBuilders\RawFragment>
+	 */
+	public function raw_fragments(): array {
+		return $this->blocks->raw_fragments();
 	}
 }
