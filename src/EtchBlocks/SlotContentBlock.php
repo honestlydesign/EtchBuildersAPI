@@ -16,7 +16,10 @@ use HonestlyDesign\EtchBuilders\EtchBlocks\Contracts\EtchBlockBuilderInterface;
 use HonestlyDesign\EtchBuilders\Types\BlockBase;
 
 /**
- * Builds etch/slot-content block with consistent fluent API.
+ * Builds etch/slot-content block as a raw escape hatch.
+ *
+ * ComponentBlock::slot() is the Golden Path for component instances because
+ * it validates the exact slot name against the component contract.
  *
  * Pattern:
  *   SlotContentBlock::new()

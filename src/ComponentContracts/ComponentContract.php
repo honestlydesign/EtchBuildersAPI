@@ -227,6 +227,21 @@ final class ComponentContract {
 	}
 
 	/**
+	 * Require one exact slot name declared by this component.
+	 *
+	 * @throws InvalidArgumentException When the slot name is absent.
+	 */
+	public function require_slot( string $slot_name ): string {
+		if ( ! in_array( $slot_name, $this->slots, true ) ) {
+			throw new InvalidArgumentException(
+				sprintf( 'Component "%s" has no exact slot named "%s".', $this->component_key, $slot_name )
+			);
+		}
+
+		return $slot_name;
+	}
+
+	/**
 	 * Return exact effective paths whose exact matrix pair is array/class.
 	 *
 	 * @return array<int, string>

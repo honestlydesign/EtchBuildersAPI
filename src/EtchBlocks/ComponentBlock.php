@@ -57,6 +57,11 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	private ?ComponentInstanceValues $instance_values = null;
 
 	/**
+	 * Schema-backed instance slot assignments, initialized only for keyed blocks.
+	 */
+	private ?ComponentInstanceSlots $instance_slots = null;
+
+	/**
 	 * HTML attributes.
 	 *
 	 * @var Attributes
@@ -101,6 +106,10 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 			$component_key,
 			Environment::component_contracts()
 		);
+		$block->instance_slots = ComponentInstanceSlots::for_component(
+			$component_key,
+			Environment::component_contracts()
+		);
 
 		return $block;
 	}
@@ -111,7 +120,7 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	 * @param int $ref The component reference ID.
 	 */
 	public function ref( int $ref ): self {
-		if ( null !== $this->instance_values ) {
+		if ( null !== $this->instance_values || null !== $this->instance_slots ) {
 			throw new InvalidArgumentException( 'A schema-backed ComponentBlock cannot replace its key-derived component ref.' );
 		}
 
@@ -129,7 +138,9 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	 * @throws InvalidArgumentException When component is not found.
 	 */
 	public function ref_by_key( string $component_key ): self {
-		if ( null !== $this->instance_values && $component_key !== $this->instance_values->component_key() ) {
+		if ( ( null !== $this->instance_values && $component_key !== $this->instance_values->component_key() )
+			|| ( null !== $this->instance_slots && $component_key !== $this->instance_slots->component_key() )
+		) {
 			throw new InvalidArgumentException( 'A schema-backed ComponentBlock cannot switch to a different component key.' );
 		}
 
@@ -377,11 +388,45 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	}
 
 	/**
+	 * Assign one exact schema-backed filled component slot.
+	 */
+	public function slot( string $name, Block $first_child, Block ...$additional_children ): self {
+		$this->schema_backed_slots()->set( $name, $first_child, ...$additional_children );
+
+		return $this;
+	}
+
+	/**
+	 * Assign the exact default component slot with content.
+	 */
+	public function default_slot( Block $first_child, Block ...$additional_children ): self {
+		return $this->slot( 'default', $first_child, ...$additional_children );
+	}
+
+	/**
+	 * Assign one exact schema-backed slot as explicitly empty.
+	 */
+	public function empty_slot( string $name ): self {
+		$this->schema_backed_slots()->set_empty( $name );
+
+		return $this;
+	}
+
+	/**
+	 * Assign the exact default component slot as explicitly empty.
+	 */
+	public function empty_default_slot(): self {
+		return $this->empty_slot( 'default' );
+	}
+
+	/**
 	 * Add an empty slot-content block for the default slot.
 	 *
 	 * Use this when a component has a default slot but you're not providing
 	 * any content. This ensures the Etch runtime correctly evaluates
 	 * `slots.default.empty = true` for conditional fallbacks.
+	 *
+	 * @deprecated Use empty_default_slot() on a keyed component for schema validation.
 	 *
 	 * @return self
 	 */
@@ -396,6 +441,8 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	 * any content. This ensures the Etch runtime correctly evaluates
 	 * slot emptiness for conditional fallbacks.
 	 *
+	 * @deprecated Use empty_slot() on a keyed component for schema validation.
+	 *
 	 * @param string $name Slot name (defaults to 'default').
 	 * @return self
 	 */
@@ -404,6 +451,24 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 			->name( $name )
 			->to_block();
 		return $this;
+	}
+
+	/**
+	 * Require the schema-backed slot manager for this keyed component.
+	 */
+	private function schema_backed_slots(): ComponentInstanceSlots {
+		if ( null === $this->component_key ) {
+			throw new InvalidArgumentException(
+				'Schema-backed component slot authoring requires for_key() or ref_by_key() so an exact Component Contract can be resolved.'
+			);
+		}
+
+		$this->instance_slots ??= ComponentInstanceSlots::for_component(
+			$this->component_key,
+			Environment::component_contracts()
+		);
+
+		return $this->instance_slots;
 	}
 
 	/**
@@ -456,10 +521,22 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 			$this->base->to_array()
 		);
 
+		if ( null !== $this->instance_slots && $this->instance_slots->has_assignments() ) {
+			if ( array() !== $this->children ) {
+				throw new InvalidArgumentException(
+					'A ComponentBlock cannot mix schema-backed slots with legacy direct component children; put every intended child inside slot() or default_slot().'
+				);
+			}
+		}
+
 		$block = Block::new( 'component', $block_attrs );
 
 		foreach ( $this->children as $child ) {
 			$block->add_child( $child );
+		}
+
+		if ( null !== $this->instance_slots ) {
+			$block->add_children( $this->instance_slots->to_blocks() );
 		}
 
 		return $block;
