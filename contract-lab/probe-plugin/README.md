@@ -27,3 +27,8 @@ the adapter owns editor controls and save actions, while the Builder API only
 compares the frontend observation before save with the observation after
 reload. Unsupported editors are explicit skips and browser transport failures
 are inconclusive; neither can promote compatibility.
+
+The minimal JavaScript check is a single passive read of the existing
+marketing fixture's `etchMarketingReady` dataset marker. Its source remains
+the checked-in file-based `marketing.js` path; no manifest, bundler, watcher,
+or separate JavaScript harness is introduced.
