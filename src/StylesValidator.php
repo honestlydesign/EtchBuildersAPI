@@ -139,6 +139,100 @@ final class StylesValidator {
 	}
 
 	/**
+	 * Validate a CSS ruleset body owned by one style selector.
+	 *
+	 * The body is deliberately validated separately from a selector because
+	 * Etch persists the selector and ruleset body as different fields. Native
+	 * nested pseudo/state, descendant, media, and container rules are valid;
+	 * global at-rules and Sass-style BEM synthesis remain explicit escapes or
+	 * global stylesheet concerns.
+	 *
+	 * @param string $owner_selector Selector that owns the ruleset body.
+	 * @param string $css            Ruleset body without selector or braces.
+	 * @return array<int, string> Validation errors.
+	 */
+	public static function validate_owner_local_css( string $owner_selector, string $css ): array {
+		$owner_selector = StylesParserRuleScanner::normalize_selector_key( trim( $owner_selector ) );
+		$css            = trim( $css );
+
+		if ( '' === $owner_selector ) {
+			return array( 'Owner-local CSS requires a non-empty owning selector.' );
+		}
+
+		if ( '' === $css || self::is_comment_only_content( $css ) ) {
+			return array();
+		}
+
+		$errors = array();
+		$clean  = self::strip_css_comments_and_strings( $css );
+
+		if ( 0 !== self::brace_balance( $clean ) ) {
+			$errors[] = 'Owner-local CSS must have balanced braces.';
+		}
+
+		if ( preg_match( '/&\s*(?:__|--)/', $clean ) ) {
+			$errors[] = 'Owner-local CSS cannot synthesize flat BEM roots with &__ or &--; register the exact element or modifier style instead.';
+		}
+
+		if ( preg_match( '/(?:^|[;{}])\s*' . preg_quote( $owner_selector, '/' ) . '\s*\{/', $clean ) ) {
+			$errors[] = sprintf(
+				'Owner-local CSS for `%s` must contain the ruleset body only; do not repeat the owning selector.',
+				$owner_selector
+			);
+		}
+
+		$depth = 0;
+		$length = strlen( $clean );
+		for ( $position = 0; $position < $length; ++$position ) {
+			$character = $clean[ $position ];
+
+			if ( '{' === $character ) {
+				++$depth;
+				continue;
+			}
+
+			if ( '}' === $character ) {
+				$depth = max( 0, $depth - 1 );
+				continue;
+			}
+
+			if ( 0 !== $depth || '@' !== $character ) {
+				continue;
+			}
+
+			if ( 1 !== preg_match( '/@([A-Za-z-]+)/A', substr( $clean, $position ), $matches ) ) {
+				continue;
+			}
+
+			$at_rule = '@' . strtolower( $matches[1] );
+			if ( '@media' === $at_rule || '@container' === $at_rule ) {
+				continue;
+			}
+
+			$errors[] = sprintf(
+				'Owner-local CSS cannot contain global at-rule %s. Use Stylesheet or PortalStyle for explicit global CSS.',
+				$at_rule
+			);
+		}
+
+		// Reuse the parser grammar for nested global at-rules and malformed
+		// selector blocks without changing the persisted selector/body shape.
+		$wrapped_errors = self::validate( $owner_selector . ' { ' . $css . ' }', StylesParserMode::FIXED );
+
+		return array_values( array_unique( array_merge( $errors, $wrapped_errors ) ) );
+	}
+
+	/**
+	 * Return a root at-rule when a caller supplies one where a selector is
+	 * expected. This small public seam is shared by checked selector escapes.
+	 *
+	 * @param string $selector Selector candidate.
+	 */
+	public static function root_at_rule_for_escape( string $selector ): ?string {
+		return self::root_at_rule_name( trim( $selector ) );
+	}
+
+	/**
 	 * Check whether CSS content contains only comments and whitespace.
 	 *
 	 * @param string $content CSS content.
@@ -150,6 +244,26 @@ final class StylesValidator {
 		}
 
 		return '' === trim( $stripped );
+	}
+
+	/**
+	 * Calculate brace balance for comment/string-stripped CSS.
+	 *
+	 * @param string $content CSS content with comments and strings removed.
+	 */
+	private static function brace_balance( string $content ): int {
+		$balance = 0;
+		$length  = strlen( $content );
+
+		for ( $position = 0; $position < $length; ++$position ) {
+			if ( '{' === $content[ $position ] ) {
+				++$balance;
+			} elseif ( '}' === $content[ $position ] ) {
+				--$balance;
+			}
+		}
+
+		return $balance;
 	}
 
 	/**

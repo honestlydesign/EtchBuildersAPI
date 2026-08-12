@@ -184,6 +184,26 @@ final class Stylesheet {
 	}
 
 	/**
+	 * Append one explicit portal rule to this global stylesheet.
+	 *
+	 * Portal rules are the checked exception for BEM-namespaced nodes rendered
+	 * outside their serialized host. The PortalStyle value requires a reason and
+	 * is validated before its selector/body are added to the global payload.
+	 *
+	 * @param PortalStyle $portal Checked portal rule.
+	 */
+	public function portal_style( PortalStyle $portal ): self {
+		$portal_css = $portal->to_css();
+
+		$this->css = '' === trim( $this->css )
+			? $portal_css
+			: rtrim( $this->css ) . "\n" . $portal_css;
+		$this->has_css = true;
+
+		return $this;
+	}
+
+	/**
 	 * Load stylesheet CSS from a file.
 	 *
 	 * @param string $file_path CSS file path.
