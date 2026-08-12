@@ -114,7 +114,8 @@ final class SiteCompiler {
 			styles: $styles,
 			assets: $assets,
 			ownership: $ownership,
-			diagnostics: $diagnostics
+			diagnostics: $diagnostics,
+			home_page_policy: $definition->home_page_policy()
 		);
 	}
 
@@ -245,7 +246,7 @@ final class SiteCompiler {
 		$identity = self::page_identity( $page );
 		try {
 			$blocks     = $page->get_blocks();
-			$entities[] = CompiledSiteEntity::new( CompiledSiteEntityType::PAGE, $identity, array( 'blocks' => $blocks ) );
+			$entities[] = CompiledSiteEntity::new( CompiledSiteEntityType::PAGE, $identity, self::content_payload( $page, $blocks, $page->get_slug(), $page->get_id() ) );
 			self::append_pattern_dependencies( $identity, $page->get_pattern_uses(), $dependencies );
 			self::collect_entity_metadata( $identity, $page, $blocks, $dependencies, $style_owners, $assets, $asset_ids, $ownership, $diagnostics, $loop_keys );
 		} catch ( Throwable $throwable ) {
@@ -281,7 +282,7 @@ final class SiteCompiler {
 		}
 		try {
 			$blocks     = $post->get_blocks();
-			$entities[] = CompiledSiteEntity::new( CompiledSiteEntityType::POST, $identity, array( 'post_type' => $post_type, 'blocks' => $blocks ) );
+			$entities[] = CompiledSiteEntity::new( CompiledSiteEntityType::POST, $identity, self::content_payload( $post, $blocks, $post->get_slug(), $post->get_id(), $post_type ) );
 			self::append_pattern_dependencies( $identity, $post->get_pattern_uses(), $dependencies );
 			self::collect_entity_metadata( $identity, $post, $blocks, $dependencies, $style_owners, $assets, $asset_ids, $ownership, $diagnostics, $loop_keys );
 		} catch ( Throwable $throwable ) {
@@ -303,12 +304,44 @@ final class SiteCompiler {
 		$identity = 'template:slug:' . (string) $template->get_slug();
 		try {
 			$blocks     = $template->get_blocks();
-			$entities[] = CompiledSiteEntity::new( CompiledSiteEntityType::TEMPLATE, $identity, array( 'slug' => $template->get_slug(), 'blocks' => $blocks ) );
+			$entities[] = CompiledSiteEntity::new( CompiledSiteEntityType::TEMPLATE, $identity, self::content_payload( $template, $blocks, $template->get_slug(), null ) );
 			self::append_pattern_dependencies( $identity, $template->get_pattern_uses(), $dependencies );
 			self::collect_entity_metadata( $identity, $template, $blocks, $dependencies, $style_owners, $assets, $asset_ids, $ownership, $diagnostics, $loop_keys );
 		} catch ( Throwable $throwable ) {
 			$diagnostics[] = self::error( self::SERIALIZATION_FAILED, $throwable->getMessage(), $identity );
 		}
+	}
+
+	/**
+	 * Build the explicitly owned content fields for native post persistence.
+	 *
+	 * Omitted title, status, and excerpt fields intentionally retain the
+	 * existing native value on update, matching the individual builders.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private static function content_payload( \HonestlyDesign\EtchBuilders\Content\AbstractContentBuilder $builder, string $blocks, ?string $slug, ?int $id, ?string $post_type = null ): array {
+		$payload = array( 'blocks' => $blocks );
+		if ( null !== $slug ) {
+			$payload['slug'] = $slug;
+		}
+		if ( null !== $id ) {
+			$payload['id'] = $id;
+		}
+		if ( null !== $post_type ) {
+			$payload['post_type'] = $post_type;
+		}
+		if ( null !== $builder->get_title() ) {
+			$payload['post_title'] = $builder->get_title();
+		}
+		if ( null !== $builder->get_status() ) {
+			$payload['post_status'] = $builder->get_status();
+		}
+		if ( null !== $builder->get_excerpt() ) {
+			$payload['post_excerpt'] = $builder->get_excerpt();
+		}
+
+		return $payload;
 	}
 
 	/**
@@ -512,7 +545,9 @@ final class SiteCompiler {
 			if ( $definition instanceof LoopPreset ) {
 				$identity = 'loop_preset:' . $definition->get_key();
 				try {
-					$loop_payloads[ $definition->get_key() ] = $definition->to_array();
+					$loop_payload = $definition->to_array();
+					$loop_payload['id'] = $definition->get_id();
+					$loop_payloads[ $definition->get_key() ] = $loop_payload;
 					$loop_keys[ $definition->get_key() ] = true;
 				} catch ( Throwable $throwable ) {
 					$diagnostics[] = self::error( self::LOOP_INVALID, $throwable->getMessage(), $identity );

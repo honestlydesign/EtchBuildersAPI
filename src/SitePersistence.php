@@ -22,6 +22,8 @@ class SitePersistence implements SitePersistenceInterface {
 
 	private const DEPENDENCY_CYCLE = 'ETCH_SITE_PERSISTENCE_DEPENDENCY_CYCLE';
 
+	private const OWNERSHIP_INVALID = 'ETCH_SITE_PERSISTENCE_OWNERSHIP_INVALID';
+
 	public function __construct( private readonly SitePersistenceStoreInterface $store ) {
 	}
 
@@ -45,15 +47,23 @@ class SitePersistence implements SitePersistenceInterface {
 			return SitePersistenceReport::new( blocking_diagnostics: $ordered['diagnostics'] );
 		}
 
+		$ownership_diagnostics = $this->validate_ownership( $plan );
+		if ( array() !== $ownership_diagnostics ) {
+			return SitePersistenceReport::new( blocking_diagnostics: $ownership_diagnostics );
+		}
+
 		$records = array();
 		foreach ( $ordered['entities'] as $entity ) {
 			$records[] = SitePersistenceRecord::from_entity( $entity );
 		}
 		foreach ( $plan->styles() as $style ) {
-			$records[] = SitePersistenceRecord::from_resource( $style );
+			$records[] = SitePersistenceRecord::from_resource( $style, true, $this->ownership_for( $plan, $style->identity() ) );
 		}
 		foreach ( $plan->assets() as $asset ) {
-			$records[] = SitePersistenceRecord::from_resource( $asset );
+			$records[] = SitePersistenceRecord::from_resource( $asset, true, $this->ownership_for( $plan, $asset->identity() ) );
+		}
+		if ( $plan->has_home_page_policy() && SiteHomePolicyMode::NONE !== $plan->home_page_policy()->mode() ) {
+			$records[] = SitePersistenceRecord::from_home_policy( $plan->home_page_policy() );
 		}
 
 		$results = array();
@@ -204,6 +214,15 @@ class SitePersistence implements SitePersistenceInterface {
 	}
 
 	private function apply_record( SitePersistenceRecord $record ): SitePersistenceResult {
+		if ( CompiledSiteEntityType::COMPONENT_CONTRACT_CATALOG->value === $record->kind() ) {
+			return SitePersistenceResult::new(
+				$record->identity(),
+				SitePersistenceOutcome::FAILED,
+				'ETCH_SITE_PERSISTENCE_CATALOG_NOT_RUNTIME',
+				'Component Contract Catalog is a build-time contract and has no WordPress runtime record.'
+			);
+		}
+
 		try {
 			$current = $this->store->find( $record->identity() );
 		} catch ( Throwable $throwable ) {
@@ -270,5 +289,47 @@ class SitePersistence implements SitePersistenceInterface {
 			'ETCH_SITE_PERSISTENCE_FAILED',
 			$throwable->getMessage() ?: 'Compiled Site record could not be persisted.'
 		);
+	}
+
+	/**
+	 * Select the ownership edges that belong to one persisted resource.
+	 *
+	 * @return array<int, CompiledSiteOwnership>
+	 */
+	private function ownership_for( CompiledSitePlan $plan, string $resource_identity ): array {
+		return array_values(
+			array_filter(
+				$plan->ownership(),
+				static fn ( CompiledSiteOwnership $edge ): bool => $edge->resource_identity() === $resource_identity
+			)
+		);
+	}
+
+	/**
+	 * Validate ownership edges before any handler is called.
+	 *
+	 * @return array<int, CompiledSiteDiagnostic>
+	 */
+	private function validate_ownership( CompiledSitePlan $plan ): array {
+		$entities = array_fill_keys( $plan->resolved_identities(), true );
+		$entities['site:root'] = true;
+		$resources = array();
+		foreach ( array_merge( $plan->styles(), $plan->assets() ) as $resource ) {
+			$resources[ $resource->identity() ] = true;
+		}
+
+		$diagnostics = array();
+		foreach ( $plan->ownership() as $edge ) {
+			if ( ! isset( $entities[ $edge->owner_identity() ] ) || ! isset( $resources[ $edge->resource_identity() ] ) ) {
+				$diagnostics[] = CompiledSiteDiagnostic::new(
+					self::OWNERSHIP_INVALID,
+					CompiledSiteDiagnosticSeverity::ERROR,
+					sprintf( 'Compiled Site ownership edge "%s" -> "%s" does not resolve to a plan owner and resource.', $edge->owner_identity(), $edge->resource_identity() ),
+					$edge->resource_identity()
+				);
+			}
+		}
+
+		return $diagnostics;
 	}
 }

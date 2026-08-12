@@ -284,6 +284,31 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	}
 
 	/**
+	 * Return the explicitly configured post title for the compiled-plan seam.
+	 *
+	 * A null value means that registration should retain the native title on
+	 * update and use the normal slug-derived default on insert.
+	 */
+	public function get_title(): ?string {
+		return $this->title;
+	}
+
+	/**
+	 * Return the explicitly configured post status for the compiled-plan seam.
+	 */
+	public function get_status(): ?string {
+		return $this->status;
+	}
+
+	/**
+	 * Return the explicitly configured excerpt, including an intentional empty
+	 * string. A null value means excerpt() was not called.
+	 */
+	public function get_excerpt(): ?string {
+		return $this->excerpt_provided ? $this->excerpt : null;
+	}
+
+	/**
 	 * Return explicit non-wire class declarations from structured content.
 	 *
 	 * @return array<int, ClassToken>
