@@ -185,6 +185,26 @@ final class ContractLabCompatibilityLedgerRecord {
 		return $this->record['record_id'];
 	}
 
+	public function builder_contract_version(): string {
+		return $this->record['builder_contract_version'];
+	}
+
+	public function builder_source_revision(): string {
+		return $this->record['builder_source_revision'];
+	}
+
+	public function etch_release(): string {
+		return $this->record['etch_release'];
+	}
+
+	public function artifact_fingerprint(): string {
+		return $this->record['artifact_fingerprint'];
+	}
+
+	public function accepted_snapshot_version(): string {
+		return $this->record['accepted_snapshot_version'];
+	}
+
 	public function classification(): string {
 		return $this->record['classification'];
 	}
