@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace HonestlyDesign\EtchBuilders\EtchBlocks;
 
 use HonestlyDesign\EtchBuilders\Block;
+use HonestlyDesign\EtchBuilders\RawFragment;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Concerns\HasBlockBase;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Contracts\EtchBlockBuilderInterface;
 use HonestlyDesign\EtchBuilders\Types\BlockBase;
@@ -38,6 +39,11 @@ final class RawHtmlBlock implements EtchBlockBuilderInterface {
 	private string $content = '';
 
 	/**
+	 * Checked narrow fragment, when the explicit escape route is used.
+	 */
+	private ?RawFragment $fragment = null;
+
+	/**
 	 * Base block attributes.
 	 *
 	 * @var BlockBase
@@ -64,7 +70,22 @@ final class RawHtmlBlock implements EtchBlockBuilderInterface {
 	 * @param string $content The HTML content.
 	 */
 	public function content( string $content ): self {
+		if ( null !== $this->fragment ) {
+			throw new \InvalidArgumentException( 'Cannot replace a checked RawFragment with legacy raw content().' );
+		}
+
 		$this->content = $content;
+		return $this;
+	}
+
+	/**
+	 * Set a checked, reason-bearing narrow HTML fragment.
+	 *
+	 * @param RawFragment $fragment Checked fragment escape.
+	 */
+	public function fragment( RawFragment $fragment ): self {
+		$this->fragment = $fragment;
+		$this->content  = $fragment->html();
 		return $this;
 	}
 
@@ -79,6 +100,6 @@ final class RawHtmlBlock implements EtchBlockBuilderInterface {
 			$this->base->to_array()
 		);
 
-		return Block::new_self_closing( 'raw-html', $block_attrs );
+		return Block::new_self_closing( 'raw-html', $block_attrs, array(), $this->fragment );
 	}
 }
