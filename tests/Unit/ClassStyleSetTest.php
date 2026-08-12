@@ -99,6 +99,27 @@ final class ClassStyleSetTest extends TestCase {
 		}
 	}
 
+	public function test_of_rejects_a_generic_state_selector_before_retaining_the_set(): void {
+		$style_state = Style::snapshot_state();
+
+		try {
+			Style::reset();
+			Environment::reset();
+			ClassStyleRegistry::reset_cache();
+
+			$reference = $this->register_reference( 'state-opaque-id', '.is-active' );
+
+			$this->expectException( InvalidArgumentException::class );
+			$this->expectExceptionMessage( 'generic state class' );
+
+			ClassStyleSet::of( $reference );
+		} finally {
+			ClassStyleRegistry::reset_cache();
+			Environment::reset();
+			Style::restore_state( $style_state );
+		}
+	}
+
 	public function test_none_is_the_explicit_zero_reference_value(): void {
 		$set = ClassStyleSet::none();
 

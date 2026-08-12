@@ -34,6 +34,7 @@ final class ClassStyleSet {
 		$seen_selectors = array();
 
 		foreach ( $references as $reference ) {
+			ClassNamingPolicy::assert_site_presentation( substr( $reference->selector(), 1 ) );
 			$id       = $reference->id();
 			$selector = $reference->selector();
 

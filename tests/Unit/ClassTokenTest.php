@@ -45,6 +45,70 @@ final class ClassTokenTest extends TestCase {
 		self::assertNull( $token->origin() );
 	}
 
+	/**
+	 * @dataProvider valid_site_class_provider
+	 */
+	public function test_site_presentation_accepts_flat_bem_roots_without_prefix_heuristics( string $class_name ): void {
+		Style::new()
+			->id( 'opaque-' . str_replace( array( '__', '--' ), '-', $class_name ) )
+			->selector( '.' . $class_name )
+			->css( 'display:block' )
+			->type( 'class' )
+			->add();
+
+		$token = ClassToken::site_presentation(
+			ClassStyleReference::registered( 'opaque-' . str_replace( array( '__', '--' ), '-', $class_name ) )
+		);
+
+		self::assertSame( $class_name, $token->token() );
+	}
+
+	/**
+	 * @return array<string, array{string}>
+	 */
+	public static function valid_site_class_provider(): array {
+		return array(
+			'block'              => array( 'hero' ),
+			'element'            => array( 'hero__title' ),
+			'modifier'           => array( 'hero--featured' ),
+			'element modifier'   => array( 'hero__title--featured' ),
+			'hyphenated block'   => array( 'project-hero__title' ),
+			'product prefix'     => array( 'omide-hero' ),
+		);
+	}
+
+	/**
+	 * @dataProvider invalid_site_class_provider
+	 */
+	public function test_site_presentation_rejects_generic_states_and_selector_synthesis( string $class_name ): void {
+		Style::new()
+			->id( 'opaque-invalid' )
+			->selector( '.' . $class_name )
+			->css( 'display:block' )
+			->type( 'class' )
+			->add();
+
+		$this->expectException( InvalidArgumentException::class );
+		ClassToken::site_presentation( ClassStyleReference::registered( 'opaque-invalid' ) );
+	}
+
+	/**
+	 * @return array<string, array{string}>
+	 */
+	public static function invalid_site_class_provider(): array {
+		return array(
+			'is state'       => array( 'is-active' ),
+			'has state'      => array( 'has-error' ),
+			'js state'       => array( 'js-open' ),
+			'sass element'   => array( 'hero__' ),
+			'sass modifier'  => array( 'hero--' ),
+			'compound'       => array( 'hero title' ),
+			'pseudo'         => array( 'hero:hover' ),
+			'parent marker'  => array( '&__title' ),
+			'interpolation'  => array( 'hero-#{name}' ),
+		);
+	}
+
 	public function test_named_non_site_provenance_is_exposed_without_a_style_reference(): void {
 		$utility   = ClassToken::project_utility( 'u-hidden' );
 		$framework = ClassToken::external_framework( 'grid', 'ACSS' );

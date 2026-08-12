@@ -104,6 +104,18 @@ final class ComponentPropertyClassDefaultTest extends TestCase {
 		self::assertSame( array( 'second-opaque-id', 'first-opaque-id' ), $payload['default'] );
 	}
 
+	public function test_legacy_array_default_keeps_non_bem_class_styles_as_an_explicit_compatibility_escape(): void {
+		$this->storage->replace_styles(
+			array( 'legacy-id' => $this->class_style( '.legacy_class' ) )
+		);
+
+		$payload = ClassProperty::new( 'Classes' )
+			->default( array( 'legacy-id' ) )
+			->to_array();
+
+		self::assertSame( array( 'legacy-id' ), $payload['default'] );
+	}
+
 	/**
 	 * @dataProvider invalid_raw_default_provider
 	 *
