@@ -22,6 +22,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 	use HonestlyDesign\EtchBuilders\RegistrationResult;
 	use HonestlyDesign\EtchBuilders\SitePersistenceReport;
 	use HonestlyDesign\EtchBuilders\SitePersistenceResult;
+	use HonestlyDesign\EtchBuilders\SitePersistenceOutcome;
 	use HonestlyDesign\EtchBuilders\SiteHomePolicy;
 	use HonestlyDesign\EtchBuilders\Support\InMemorySitePersistence;
 	use HonestlyDesign\EtchBuilders\Support\InMemorySitePersistenceStore;
@@ -35,7 +36,8 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 	final class SitePersistenceTest extends TestCase {
 
 		public function test_first_apply_creates_records_and_identical_apply_is_unchanged(): void {
-			$persistence = new InMemorySitePersistence();
+			$store       = new RecordingSitePersistenceStore();
+			$persistence = new InMemorySitePersistence( $store );
 			$plan        = $this->plan();
 
 			$created = $persistence->apply( $plan );
@@ -46,6 +48,8 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 			self::assertTrue( $again->is_success() );
 			self::assertSame( array( 'unchanged', 'unchanged' ), $this->outcomes( $again ) );
 			self::assertSame( array( 'component:Hero', 'style:hero' ), $this->identities( $again ) );
+			self::assertSame( 2, $store->create_calls );
+			self::assertSame( 0, $store->update_calls );
 		}
 
 		public function test_pattern_dependencies_are_applied_before_their_consumers(): void {
@@ -180,6 +184,42 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 			self::assertSame( 'ETCH_SITE_PERSISTENCE_CONFLICT', $report->results()[0]->code() );
 		}
 
+		public function test_report_classifies_applied_unchanged_conflicted_skipped_and_failed_results(): void {
+			$report = SitePersistenceReport::new(
+				array(
+					SitePersistenceResult::new( 'component:created', SitePersistenceOutcome::CREATED, 'created', 'created' ),
+					SitePersistenceResult::new( 'component:updated', SitePersistenceOutcome::UPDATED, 'updated', 'updated' ),
+					SitePersistenceResult::new( 'component:unchanged', SitePersistenceOutcome::UNCHANGED, 'unchanged', 'unchanged' ),
+					SitePersistenceResult::new( 'component:conflict', SitePersistenceOutcome::CONFLICT, 'conflict', 'conflict' ),
+					SitePersistenceResult::new( 'component:skipped', SitePersistenceOutcome::SKIPPED, 'skipped', 'skipped' ),
+					SitePersistenceResult::new( 'component:failed', SitePersistenceOutcome::FAILED, 'failed', 'failed' ),
+				)
+			);
+
+			self::assertSame( array( 'component:created', 'component:updated' ), $this->result_identities( $report->applied_results() ) );
+			self::assertSame( array( 'component:unchanged' ), $this->result_identities( $report->unchanged_results() ) );
+			self::assertSame( array( 'component:conflict' ), $this->result_identities( $report->conflicted_results() ) );
+			self::assertSame( array( 'component:skipped' ), $this->result_identities( $report->skipped_results() ) );
+			self::assertSame( array( 'component:failed' ), $this->result_identities( $report->failed_results() ) );
+			self::assertTrue( $report->results()[0]->is_applied() );
+			self::assertFalse( $report->results()[4]->is_applied() );
+			self::assertFalse( $report->is_success() );
+		}
+
+		public function test_store_skip_result_preserves_identity_reason_and_is_not_applied(): void {
+			$report = ( new InMemorySitePersistence( new SkippingSitePersistenceStore() ) )->apply(
+				CompiledSitePlan::from_sections( entities: array( $this->entity( 'skipped' ) ) )
+			);
+
+			self::assertFalse( $report->is_success() );
+			self::assertSame( array( 'skipped' ), $this->outcomes( $report ) );
+			self::assertSame( array( 'component:Hero' ), $this->identities( $report ) );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_SKIPPED', $report->results()[0]->code() );
+			self::assertSame( 'Dev-only entity is not active in this runtime.', $report->results()[0]->message() );
+			self::assertSame( array( 'component:Hero' ), $this->result_identities( $report->skipped_results() ) );
+			self::assertFalse( $report->results()[0]->is_applied() );
+		}
+
 		public function test_blocking_diagnostics_reject_plan_before_store_is_touched(): void {
 			$store       = new CountingSitePersistenceStore();
 			$persistence = new InMemorySitePersistence( $store );
@@ -197,6 +237,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 			self::assertFalse( $report->is_success() );
 			self::assertTrue( $report->was_blocked() );
 			self::assertSame( array( $diagnostic ), $report->blocking_diagnostics() );
+			self::assertSame( array(), $report->applied_results() );
 			self::assertSame( 0, $store->find_calls );
 			self::assertSame( 0, $store->create_calls );
 			self::assertSame( 0, $store->update_calls );
@@ -905,6 +946,17 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 			);
 		}
 
+		/**
+		 * @param array<int, SitePersistenceResult> $results
+		 * @return array<int, string>
+		 */
+		private function result_identities( array $results ): array {
+			return array_map(
+				static fn ( SitePersistenceResult $result ): string => $result->identity(),
+				$results
+			);
+		}
+
 		private function install_wordpress_option_stubs(): void {
 			eval(
 				<<<'PHP'
@@ -1248,6 +1300,24 @@ PHP
 	}
 
 	/**
+	 * Store that explicitly declines one compiled record without treating it as a failure.
+	 */
+	final class SkippingSitePersistenceStore implements SitePersistenceStoreInterface {
+
+		public function find( string $identity ): ?SitePersistenceRecord {
+			return null;
+		}
+
+		public function create( SitePersistenceRecord $record ): RegistrationResult {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_SKIPPED', 'Dev-only entity is not active in this runtime.' );
+		}
+
+		public function update( SitePersistenceRecord $record ): RegistrationResult {
+			return $this->create( $record );
+		}
+	}
+
+	/**
 	 * Store spy proving blocked plans do not even read persistence state.
 	 */
 	final class CountingSitePersistenceStore implements SitePersistenceStoreInterface {
@@ -1283,11 +1353,16 @@ PHP
 		/** @var array<int, string> */
 		public array $created = array();
 
+		public int $create_calls = 0;
+
+		public int $update_calls = 0;
+
 		public function find( string $identity ): ?SitePersistenceRecord {
 			return $this->records[ $identity ] ?? null;
 		}
 
 		public function create( SitePersistenceRecord $record ): RegistrationResult {
+			++$this->create_calls;
 			$this->records[ $record->identity() ] = $record;
 			$this->created[]                     = $record->identity();
 
@@ -1295,6 +1370,7 @@ PHP
 		}
 
 		public function update( SitePersistenceRecord $record ): RegistrationResult {
+			++$this->update_calls;
 			$this->records[ $record->identity() ] = $record;
 
 			return RegistrationResult::success();

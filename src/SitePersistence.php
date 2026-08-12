@@ -302,9 +302,11 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		if ( ! $result->is_success() ) {
-			$outcome = 'ETCH_SITE_PERSISTENCE_CONFLICT' === $result->get_error_code()
-				? SitePersistenceOutcome::CONFLICT
-				: SitePersistenceOutcome::FAILED;
+			$outcome = match ( $result->get_error_code() ) {
+				'ETCH_SITE_PERSISTENCE_CONFLICT' => SitePersistenceOutcome::CONFLICT,
+				'ETCH_SITE_PERSISTENCE_SKIPPED'  => SitePersistenceOutcome::SKIPPED,
+				default                          => SitePersistenceOutcome::FAILED,
+			};
 
 			return SitePersistenceResult::new(
 				$record->identity(),
