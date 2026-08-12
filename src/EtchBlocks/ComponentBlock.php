@@ -14,6 +14,7 @@ use HonestlyDesign\EtchBuilders\Block;
 use HonestlyDesign\EtchBuilders\ClassStyleDiagnostic;
 use HonestlyDesign\EtchBuilders\ClassStyleRegistry;
 use HonestlyDesign\EtchBuilders\ClassStyleSet;
+use HonestlyDesign\EtchBuilders\ComponentProperties\ComponentInstanceValue;
 use HonestlyDesign\EtchBuilders\Environment;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Concerns\HasBlockBase;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Concerns\HasChildren;
@@ -44,6 +45,16 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	 * @var int
 	 */
 	private int $ref = 0;
+
+	/**
+	 * Component key retained by the schema-backed authoring lane.
+	 */
+	private ?string $component_key = null;
+
+	/**
+	 * Schema-backed instance assignments, initialized only for keyed blocks.
+	 */
+	private ?ComponentInstanceValues $instance_values = null;
 
 	/**
 	 * HTML attributes.
@@ -82,12 +93,30 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	}
 
 	/**
+	 * Create the Golden Path block for one exact catalog component key.
+	 */
+	public static function for_key( string $component_key ): self {
+		$block = self::new()->ref_by_key( $component_key );
+		$block->instance_values = ComponentInstanceValues::for_component(
+			$component_key,
+			Environment::component_contracts()
+		);
+
+		return $block;
+	}
+
+	/**
 	 * Set the component reference ID (required).
 	 *
 	 * @param int $ref The component reference ID.
 	 */
 	public function ref( int $ref ): self {
+		if ( null !== $this->instance_values ) {
+			throw new InvalidArgumentException( 'A schema-backed ComponentBlock cannot replace its key-derived component ref.' );
+		}
+
 		$this->ref = $ref;
+		$this->component_key = null;
 		return $this;
 	}
 
@@ -100,6 +129,10 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	 * @throws InvalidArgumentException When component is not found.
 	 */
 	public function ref_by_key( string $component_key ): self {
+		if ( null !== $this->instance_values && $component_key !== $this->instance_values->component_key() ) {
+			throw new InvalidArgumentException( 'A schema-backed ComponentBlock cannot switch to a different component key.' );
+		}
+
 		$ref = Environment::ref_resolver()->ref_by_key( $component_key );
 
 		if ( 0 === $ref ) {
@@ -109,6 +142,26 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 		}
 
 		$this->ref = $ref;
+		$this->component_key = $component_key;
+		return $this;
+	}
+
+	/**
+	 * Set one exact schema-backed component instance value path.
+	 */
+	public function prop_value( string $path, ComponentInstanceValue $value ): self {
+		if ( null === $this->component_key ) {
+			throw new InvalidArgumentException(
+				'Schema-backed component prop authoring requires for_key() or ref_by_key() so an exact Component Contract can be resolved.'
+			);
+		}
+
+		$this->instance_values ??= ComponentInstanceValues::for_component(
+			$this->component_key,
+			Environment::component_contracts()
+		);
+		$this->instance_values->set( $path, $value );
+
 		return $this;
 	}
 
@@ -383,10 +436,22 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 			);
 		}
 
+		$component_attributes = $this->attributes->to_array();
+		if ( null !== $this->instance_values ) {
+			foreach ( $this->instance_values->encode_attributes() as $key => $value ) {
+				if ( array_key_exists( $key, $component_attributes ) ) {
+					throw new InvalidArgumentException(
+						sprintf( 'Schema-backed component root "%s" conflicts with an existing raw or legacy component attribute.', $key )
+					);
+				}
+				$component_attributes[ $key ] = $value;
+			}
+		}
+
 		$block_attrs = array_merge(
 			array(
 				'ref'        => $this->ref,
-				'attributes' => $this->attributes->to_array(),
+				'attributes' => $component_attributes,
 			),
 			$this->base->to_array()
 		);
