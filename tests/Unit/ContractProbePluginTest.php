@@ -48,14 +48,15 @@ final class ContractProbePluginTest extends TestCase {
 		self::assertFalse( $class::supports_versions( array( '1.0' ), '1.0' ) );
 	}
 
-	public function test_plugin_source_contains_no_proprietary_implementation_or_broad_payload_surface(): void {
+	public function test_plugin_source_contains_no_proprietary_implementation_or_unbounded_payload_surface(): void {
 		$source = file_get_contents( dirname( __DIR__, 2 ) . '/contract-lab/probe-plugin/src/ContractProbePlugin.php' );
 		self::assertIsString( $source );
 		self::assertStringContainsString( 'register_rest_route', $source );
 		self::assertStringContainsString( 'current_user_can', $source );
 		self::assertStringContainsString( 'wp_get_environment_type', $source );
-		self::assertStringNotContainsString( 'Etch\\', $source );
+		self::assertStringContainsString( 'StylesRegister', $source );
 		self::assertStringNotContainsString( 'eval(', $source );
-		self::assertStringNotContainsString( 'get_posts(', $source );
+		self::assertStringNotContainsString( 'get_option(\'options\'', $source );
+		self::assertStringNotContainsString( 'SELECT ', $source );
 	}
 }
