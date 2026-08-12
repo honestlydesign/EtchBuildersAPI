@@ -24,6 +24,13 @@ final class BlockSequence {
 	 */
 	private array $blocks = array();
 
+	/**
+	 * Registered pattern dependencies expanded into this sequence.
+	 *
+	 * @var array<int, PatternUse>
+	 */
+	private array $pattern_uses = array();
+
 	private function __construct() {
 	}
 
@@ -47,9 +54,9 @@ final class BlockSequence {
 	/**
 	 * Append one typed block or builder and detach its current structure.
 	 *
-	 * @param Block|EtchBlockBuilderInterface $item Typed item.
+	 * @param Block|EtchBlockBuilderInterface|PatternUse $item Typed item.
 	 */
-	public function append( Block|EtchBlockBuilderInterface $item ): self {
+	public function append( Block|EtchBlockBuilderInterface|PatternUse $item ): self {
 		return $this->append_many( array( $item ) );
 	}
 
@@ -60,9 +67,18 @@ final class BlockSequence {
 	 */
 	public function append_many( array $items ): self {
 		$detached_blocks = array();
+		$pattern_uses    = array();
 		foreach ( $items as $item ) {
+			if ( $item instanceof PatternUse ) {
+				$used_sequence = $item->sequence();
+				$detached_blocks = array_merge( $detached_blocks, $used_sequence->to_blocks() );
+				$pattern_uses[]  = $item;
+				$pattern_uses    = array_merge( $pattern_uses, $used_sequence->pattern_uses() );
+				continue;
+			}
+
 			if ( ! ( $item instanceof Block ) && ! ( $item instanceof EtchBlockBuilderInterface ) ) {
-				throw new InvalidArgumentException( 'BlockSequence expects only Block or typed block-builder instances.' );
+				throw new InvalidArgumentException( 'BlockSequence expects only Block, typed block-builder, or PatternUse instances.' );
 			}
 
 			$block             = $item instanceof EtchBlockBuilderInterface ? $item->to_block() : $item;
@@ -70,8 +86,34 @@ final class BlockSequence {
 		}
 
 		$this->blocks = array_merge( $this->blocks, $detached_blocks );
+		$this->pattern_uses = array_merge( $this->pattern_uses, $pattern_uses );
 
 		return $this;
+	}
+
+	/**
+	 * Append another typed sequence while preserving its dependency metadata.
+	 */
+	public function append_sequence( self $sequence ): self {
+		if ( $sequence->is_empty() ) {
+			throw new InvalidArgumentException( 'BlockSequence cannot append an empty sequence.' );
+		}
+
+		$this->blocks        = array_merge( $this->blocks, $sequence->to_blocks() );
+		$this->pattern_uses  = array_merge( $this->pattern_uses, $sequence->pattern_uses() );
+
+		return $this;
+	}
+
+	/**
+	 * Return a detached sequence copy, including dependency metadata.
+	 */
+	public function copy(): self {
+		$copy               = new self();
+		$copy->blocks       = $this->to_blocks();
+		$copy->pattern_uses = $this->pattern_uses;
+
+		return $copy;
 	}
 
 	/**
@@ -139,5 +181,14 @@ final class BlockSequence {
 		}
 
 		return $fragments;
+	}
+
+	/**
+	 * Return registered Pattern dependencies in expansion order.
+	 *
+	 * @return array<int, PatternUse>
+	 */
+	public function pattern_uses(): array {
+		return $this->pattern_uses;
 	}
 }

@@ -164,10 +164,28 @@ final class Pattern implements ClassTokenMetadataProviderInterface {
 		}
 
 		$this->block_sequence = $blocks instanceof BlockSequence
-			? BlockSequence::from( $blocks->to_blocks() )
+			? $blocks->copy()
 			: BlockSequence::from( array( $blocks ) );
 		$this->blocks       = '';
 		$this->class_tokens = $this->block_sequence->class_tokens();
+		return $this;
+	}
+
+	/**
+	 * Append one registered Pattern Use to this Pattern's typed block tree.
+	 *
+	 * @throws InvalidArgumentException When raw serialized blocks were already set.
+	 */
+	public function pattern_use( PatternUse $pattern_use ): self {
+		if ( '' !== trim( $this->blocks ) && null === $this->block_sequence ) {
+			throw new InvalidArgumentException( 'Pattern cannot mix raw blocks markup with pattern_use().' );
+		}
+
+		$this->block_sequence ??= BlockSequence::new();
+		$this->block_sequence->append( $pattern_use );
+		$this->blocks       = '';
+		$this->class_tokens = $this->block_sequence->class_tokens();
+
 		return $this;
 	}
 
@@ -207,6 +225,23 @@ final class Pattern implements ClassTokenMetadataProviderInterface {
 	 */
 	public function get_blocks(): string {
 		return null !== $this->block_sequence ? $this->block_sequence->to_markup() : $this->blocks;
+	}
+
+	/**
+	 * Return a detached typed sequence when this Pattern was authored
+	 * structurally; raw serialized markup has no safe Pattern Use expansion.
+	 */
+	public function get_block_sequence(): ?BlockSequence {
+		return null !== $this->block_sequence ? $this->block_sequence->copy() : null;
+	}
+
+	/**
+	 * Return registered Pattern dependencies nested in this Pattern.
+	 *
+	 * @return array<int, PatternUse>
+	 */
+	public function get_pattern_uses(): array {
+		return null !== $this->block_sequence ? $this->block_sequence->pattern_uses() : array();
 	}
 
 	/**

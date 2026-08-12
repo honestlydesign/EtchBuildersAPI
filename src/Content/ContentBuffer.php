@@ -14,6 +14,7 @@ use HonestlyDesign\EtchBuilders\Block;
 use HonestlyDesign\EtchBuilders\BlockSequence;
 use HonestlyDesign\EtchBuilders\ClassToken;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Contracts\EtchBlockBuilderInterface;
+use HonestlyDesign\EtchBuilders\PatternUse;
 
 /**
  * Accumulates page/template content from structured blocks or raw markup.
@@ -98,7 +99,21 @@ final class ContentBuffer {
 		}
 
 		$this->mode = self::MODE_BLOCKS;
-		$this->blocks->append_many( $sequence->to_blocks() );
+		$this->blocks->append_sequence( $sequence );
+
+		return $this;
+	}
+
+	/**
+	 * Append one registered Pattern Use as typed content.
+	 */
+	public function pattern_use( PatternUse $pattern_use ): self {
+		if ( self::MODE_MARKUP === $this->mode ) {
+			throw new InvalidArgumentException( 'Content builder cannot mix blocks_markup() with pattern_use().' );
+		}
+
+		$this->mode = self::MODE_BLOCKS;
+		$this->blocks->append( $pattern_use );
 
 		return $this;
 	}
@@ -150,5 +165,14 @@ final class ContentBuffer {
 	 */
 	public function class_tokens(): array {
 		return $this->blocks->class_tokens();
+	}
+
+	/**
+	 * Return registered Pattern dependencies retained by structured content.
+	 *
+	 * @return array<int, PatternUse>
+	 */
+	public function pattern_uses(): array {
+		return $this->blocks->pattern_uses();
 	}
 }

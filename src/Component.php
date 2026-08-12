@@ -173,10 +173,28 @@ final class Component implements ClassTokenMetadataProviderInterface {
 		}
 
 		$this->block_sequence = $blocks instanceof BlockSequence
-			? BlockSequence::from( $blocks->to_blocks() )
+			? $blocks->copy()
 			: BlockSequence::from( array( $blocks ) );
 		$this->blocks       = '';
 		$this->class_tokens = $this->block_sequence->class_tokens();
+		return $this;
+	}
+
+	/**
+	 * Append one registered Pattern Use to this Component's typed block tree.
+	 *
+	 * @throws InvalidArgumentException When raw serialized blocks were already set.
+	 */
+	public function pattern_use( PatternUse $pattern_use ): self {
+		if ( '' !== trim( $this->blocks ) && null === $this->block_sequence ) {
+			throw new InvalidArgumentException( 'Component cannot mix raw blocks markup with pattern_use().' );
+		}
+
+		$this->block_sequence ??= BlockSequence::new();
+		$this->block_sequence->append( $pattern_use );
+		$this->blocks       = '';
+		$this->class_tokens = $this->block_sequence->class_tokens();
+
 		return $this;
 	}
 
@@ -251,6 +269,15 @@ final class Component implements ClassTokenMetadataProviderInterface {
 	 */
 	public function get_blocks(): string {
 		return null !== $this->block_sequence ? $this->block_sequence->to_markup() : $this->blocks;
+	}
+
+	/**
+	 * Return registered Pattern dependencies nested in this Component.
+	 *
+	 * @return array<int, PatternUse>
+	 */
+	public function get_pattern_uses(): array {
+		return null !== $this->block_sequence ? $this->block_sequence->pattern_uses() : array();
 	}
 
 	/**
