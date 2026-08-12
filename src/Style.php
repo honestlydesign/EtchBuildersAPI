@@ -90,6 +90,16 @@ final class Style {
 	private bool $has_css = false;
 
 	/**
+	 * Whether the CSS was supplied through the checked owner-local path.
+	 */
+	private bool $is_owner_local = false;
+
+	/**
+	 * Explicit non-simple selector escape, when one was supplied.
+	 */
+	private ?ScopedSelector $scoped_selector = null;
+
+	/**
 	 * Style type.
 	 *
 	 * @var string|null
@@ -159,6 +169,10 @@ final class Style {
 	 * @param string $selector CSS selector.
 	 */
 	public function selector( string $selector ): self {
+		if ( null !== $this->scoped_selector ) {
+			throw new InvalidArgumentException( 'A ScopedSelector escape is already set; choose the normal selector before the escape.' );
+		}
+
 		$this->selector = $selector;
 		return $this;
 	}
@@ -172,6 +186,50 @@ final class Style {
 		$this->css     = $css;
 		$this->has_css = true;
 		return $this;
+	}
+
+	/**
+	 * Set a CSS ruleset body through the owner-local Golden Path.
+	 *
+	 * The selector remains a separate Etch field. Native nested pseudo/state,
+	 * descendant, media, and container rules are accepted; global at-rules and
+	 * Sass-style BEM synthesis fail before the style enters the registry.
+	 *
+	 * @param string $css Ruleset body without selector or braces.
+	 */
+	public function owner_local_css( string $css ): self {
+		if ( null !== $this->scoped_selector ) {
+			throw new InvalidArgumentException( 'Owner-local CSS cannot be combined with a ScopedSelector escape.' );
+		}
+
+		$this->css            = $css;
+		$this->has_css        = true;
+		$this->is_owner_local = true;
+
+		return $this;
+	}
+
+	/**
+	 * Set an explicit non-simple selector escape.
+	 *
+	 * @param ScopedSelector $selector Checked selector and rationale.
+	 */
+	public function scoped_selector( ScopedSelector $selector ): self {
+		if ( $this->is_owner_local ) {
+			throw new InvalidArgumentException( 'ScopedSelector cannot be combined with owner-local CSS.' );
+		}
+
+		$this->selector        = $selector->selector();
+		$this->scoped_selector = $selector;
+
+		return $this;
+	}
+
+	/**
+	 * Whether this style uses an explicit ScopedSelector escape.
+	 */
+	public function is_scoped_selector(): bool {
+		return null !== $this->scoped_selector;
 	}
 
 	/**
@@ -235,6 +293,13 @@ final class Style {
 		$selector      = $this->validate_selector();
 		$css           = $this->validate_css();
 		$resolved_type = $this->resolve_type( $selector );
+
+		if ( $this->is_owner_local ) {
+			$errors = StylesValidator::validate_owner_local_css( $selector, $css );
+			if ( array() !== $errors ) {
+				throw new InvalidArgumentException( implode( ' ', $errors ) );
+			}
+		}
 
 		self::assert_style_id_identity_available( $style_id, $selector, $resolved_type );
 
