@@ -12,6 +12,7 @@ namespace HonestlyDesign\EtchBuilders\EtchBlocks;
 use InvalidArgumentException;
 use stdClass;
 use HonestlyDesign\EtchBuilders\ClassStyleSet;
+use HonestlyDesign\EtchBuilders\ComponentProperties\ComponentInstanceValue;
 use HonestlyDesign\EtchBuilders\Support\Json;
 
 /**
@@ -91,6 +92,40 @@ final class ComponentPropValueEncoder {
 	}
 
 	/**
+	 * Encode a primitive object prop while preserving JSON object identity.
+	 *
+	 * @param array<int|string, mixed>|stdClass $payload Object payload.
+	 */
+	public static function literal_object( array|stdClass $payload ): string {
+		if ( is_array( $payload ) && array() !== $payload && array_is_list( $payload ) ) {
+			throw new InvalidArgumentException( 'Component object prop payload must be object-shaped, not a list.' );
+		}
+
+		if ( is_array( $payload ) ) {
+			$object = new stdClass();
+			foreach ( $payload as $key => $value ) {
+				$object->{(string) $key} = $value;
+			}
+			$payload = $object;
+		}
+
+		return '{' . self::json_encode_payload( $payload, 'Component object prop payload' ) . '}';
+	}
+
+	/**
+	 * Encode a primitive array prop without applying group/repeater coercions.
+	 *
+	 * @param array<int, mixed> $items Literal JSON list.
+	 */
+	public static function literal_array( array $items ): string {
+		if ( ! array_is_list( $items ) ) {
+			throw new InvalidArgumentException( 'Component literal array prop payload must be a list.' );
+		}
+
+		return '{' . self::json_encode_payload( $items, 'Component literal array prop payload' ) . '}';
+	}
+
+	/**
 	 * Encode a top-level array prop.
 	 *
 	 * @param array<int, mixed> $items Array items.
@@ -165,6 +200,10 @@ final class ComponentPropValueEncoder {
 			return null === $payload_value ? '' : $payload_value;
 		}
 
+		if ( $payload_value instanceof ComponentInstanceValue ) {
+			return $payload_value->encode();
+		}
+
 		if ( $payload_value instanceof ClassStyleSet ) {
 			return self::class( $payload_value->ids() );
 		}
@@ -182,7 +221,7 @@ final class ComponentPropValueEncoder {
 		}
 
 		if ( $payload_value instanceof stdClass ) {
-			return self::normalize_group_payload( get_object_vars( $payload_value ), false );
+			return (object) self::normalize_group_payload( get_object_vars( $payload_value ), false );
 		}
 
 		if ( is_array( $payload_value ) ) {
@@ -315,6 +354,10 @@ final class ComponentPropValueEncoder {
 			return null === $item ? '' : $item;
 		}
 
+		if ( $item instanceof ComponentInstanceValue ) {
+			return $item->encode();
+		}
+
 		if ( $item instanceof ComponentPropGroup ) {
 			return self::normalize_group_payload( $item->to_array(), true );
 		}
@@ -328,7 +371,7 @@ final class ComponentPropValueEncoder {
 		}
 
 		if ( $item instanceof stdClass ) {
-			return self::normalize_group_payload( get_object_vars( $item ), true );
+			return (object) self::normalize_group_payload( get_object_vars( $item ), false );
 		}
 
 		if ( is_array( $item ) ) {
