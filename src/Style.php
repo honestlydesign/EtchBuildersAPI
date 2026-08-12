@@ -62,6 +62,17 @@ final class Style {
 	private static array $retained_persisted_identities = array();
 
 	/**
+	 * Persisted identities explicitly released by an owner-local replacement.
+	 *
+	 * These are exact request-local release records, not a persisted ownership
+	 * heuristic. A released record is removable only while its full persisted
+	 * payload is unchanged.
+	 *
+	 * @var array<array-key, array{selector: string, type: string, collection: string, payload: array<string, mixed>}>
+	 */
+	private static array $released_persisted_identities = array();
+
+	/**
 	 * Style ID.
 	 *
 	 * @var string
@@ -133,8 +144,8 @@ final class Style {
 	/**
 	 * Style collection override.
 	 *
-	 * When null, falls back to DEFAULT_COLLECTION. Set to a code-owned marker
-	 * (e.g. 'OhMyIDEtch') so orphan detection can identify builder-managed styles.
+	 * When null, falls back to DEFAULT_COLLECTION. Collections are presentation
+	 * metadata and are not used as ownership evidence.
 	 *
 	 * @var string|null
 	 */
@@ -327,6 +338,7 @@ final class Style {
 			'type'       => $resolved_type,
 			'collection' => $style['collection'],
 		);
+		unset( self::$released_persisted_identities[ $style_id ] );
 
 		self::remove_registry_selector_conflicts( $style_id, $selector );
 
@@ -374,9 +386,9 @@ final class Style {
 	 * - Overwrite-on-register styles: Always overwrite DB without persisting readonly
 	 * - Non-readonly styles: Require matching selector/type identity, then preserve user-owned DB content after first registration
 	 *
-	 * Also ensures:
-	 * - Removing orphaned code-owned styles no longer in code
-	 * - Removing styles with same selector but different ID (conflicts)
+	 * Persisted records that are not part of this request remain untouched. Exact
+	 * cleanup is owned by the compiled Site persistence ledger, not by style IDs,
+	 * collections, or selector heuristics.
 	 *
 	 * @return bool True when styles are up-to-date, false on persistence failure.
 	 * @throws InvalidArgumentException When a registry style ID conflicts with persisted identity.
@@ -391,35 +403,10 @@ final class Style {
 		self::assert_retained_identities_match_persisted( $existing_styles );
 		self::assert_retained_selectors_are_unique( $existing_styles );
 
-		// If registry is empty, clear orphaned code-owned styles from DB.
-		if ( array() === self::$registry ) {
-			$cleaned_styles = array();
-			$changed        = false;
-
-			foreach ( $existing_styles as $style_id => $style ) {
-				if ( isset( self::$retained_persisted_identities[ (string) $style_id ] ) ) {
-					$cleaned_styles[ $style_id ] = $style;
-					continue;
-				}
-
-				if ( is_array( $style ) && self::is_orphaned_code_owned_style( (string) $style_id, $style ) ) {
-					$changed = true;
-					continue;
-				}
-
-				if ( is_array( $style ) ) {
-					$cleaned_styles[ $style_id ] = self::normalize_persisted_style( $style );
-					continue;
-				}
-
-				$cleaned_styles[ $style_id ] = $style;
-			}
-
-			if ( ! $changed ) {
-				return true;
-			}
-
-			return Environment::storage()->set( self::STYLES_OPTION_NAME, $cleaned_styles );
+		// An empty registry is not an ownership declaration. Preserve every
+		// persisted style unless a compiled-plan snapshot authorizes cleanup.
+		if ( array() === self::$registry && array() === self::$released_persisted_identities ) {
+			return true;
 		}
 
 		$selector_map     = self::build_selector_map( self::$registry );
@@ -459,28 +446,28 @@ final class Style {
 				continue;
 			}
 
-			// Skip invalid entries.
-			if ( ! is_array( $existing_style ) || ! isset( $existing_style['selector'] ) || ! is_string( $existing_style['selector'] ) ) {
+			$released = self::$released_persisted_identities[ $normalized_existing_style_id ] ?? null;
+			if ( is_array( $released ) && is_array( $existing_style ) && $existing_style === $released['payload'] ) {
 				continue;
 			}
 
-			$existing_selector = trim( $existing_style['selector'] );
-			if ( '' === $existing_selector ) {
-				continue;
+			if ( is_array( $existing_style ) && isset( $existing_style['selector'] ) && is_string( $existing_style['selector'] ) ) {
+				$existing_selector = StylesParserRuleScanner::normalize_selector_key( $existing_style['selector'] );
+				if ( '' !== $existing_selector && isset( $selector_map[ $existing_selector ] ) ) {
+					throw new InvalidArgumentException(
+						sprintf(
+							'Style selector `%s` is already persisted under unrecorded style ID `%s` and cannot be replaced by style ID `%s`.',
+							$existing_selector,
+							$normalized_existing_style_id,
+							$selector_map[ $existing_selector ]
+						)
+					);
+				}
 			}
 
-			// Remove styles with same selector but different ID (conflicts with new registry).
-			if ( isset( $selector_map[ $existing_selector ] ) ) {
-				continue;
-			}
-
-			// Remove orphaned code-owned styles no longer present in the registry.
-			if ( self::is_orphaned_code_owned_style( $normalized_existing_style_id, $existing_style ) ) {
-				continue;
-			}
-
-			// Keep all other existing styles (user/etch styles not managed by this starter).
-			$cleaned_existing[ $existing_style_id ] = self::normalize_persisted_style( $existing_style );
+			// Unknown, malformed, external, and legacy entries are all preserved.
+			// Only the compiled-plan resource store has deletion authority.
+			$cleaned_existing[ $existing_style_id ] = $existing_style;
 		}
 
 		// Build merged styles with overwrite handling.
@@ -512,6 +499,7 @@ final class Style {
 		self::$registry                        = array();
 		self::$claimed_identities              = array();
 		self::$retained_persisted_identities    = array();
+		self::$released_persisted_identities    = array();
 	}
 
 	/**
@@ -529,7 +517,8 @@ final class Style {
 	 * @return array{
 	 *     registry: array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
 	 *     claimed_identities: array<array-key, array{selector: string, type: string, collection: string}>,
-	 *     retained_persisted_identities: array<array-key, array{selector: string, type: string, collection: string}>
+	 *     retained_persisted_identities: array<array-key, array{selector: string, type: string, collection: string}>,
+	 *     released_persisted_identities: array<array-key, array{selector: string, type: string, collection: string, payload: array<string, mixed>}>
 	 * }
 	 */
 	public static function snapshot_state(): array {
@@ -537,6 +526,7 @@ final class Style {
 			'registry'                      => self::$registry,
 			'claimed_identities'            => self::$claimed_identities,
 			'retained_persisted_identities' => self::$retained_persisted_identities,
+			'released_persisted_identities' => self::$released_persisted_identities,
 		);
 	}
 
@@ -551,6 +541,7 @@ final class Style {
 		self::$registry                        = $registry;
 		self::$claimed_identities              = array();
 		self::$retained_persisted_identities    = array();
+		self::$released_persisted_identities    = array();
 
 		foreach ( $registry as $style_id => $style ) {
 			self::$claimed_identities[ (string) $style_id ] = array(
@@ -567,13 +558,15 @@ final class Style {
 	 * @param array{
 	 *     registry: array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
 	 *     claimed_identities: array<array-key, array{selector: string, type: string, collection: string}>,
-	 *     retained_persisted_identities?: array<array-key, array{selector: string, type: string, collection: string}>
+	 *     retained_persisted_identities?: array<array-key, array{selector: string, type: string, collection: string}>,
+	 *     released_persisted_identities?: array<array-key, array{selector: string, type: string, collection: string, payload: array<string, mixed>}>
 	 * } $state Complete style state snapshot.
 	 */
 	public static function restore_state( array $state ): void {
 		self::$registry                     = $state['registry'];
 		self::$claimed_identities           = $state['claimed_identities'];
 		self::$retained_persisted_identities = $state['retained_persisted_identities'] ?? array();
+		self::$released_persisted_identities = $state['released_persisted_identities'] ?? array();
 	}
 
 	/**
@@ -653,8 +646,18 @@ final class Style {
 			}
 		}
 
+		$persisted = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
 		foreach ( self::$retained_persisted_identities as $style_id => $identity ) {
 			if ( $collection === $identity['collection'] ) {
+				$persisted_style = is_array( $persisted ) ? ( $persisted[ $style_id ] ?? null ) : null;
+				if ( is_array( $persisted_style ) ) {
+					self::$released_persisted_identities[ $style_id ] = array(
+						'selector'   => $identity['selector'],
+						'type'       => $identity['type'],
+						'collection' => $identity['collection'],
+						'payload'    => $persisted_style,
+					);
+				}
 				unset( self::$retained_persisted_identities[ $style_id ] );
 			}
 		}
@@ -993,37 +996,6 @@ final class Style {
 	}
 
 	/**
-	 * Determine whether a persisted style was code-owned but is no longer registered.
-	 *
-	 * @param string               $style_id Persisted style ID.
-	 * @param array<string, mixed> $style    Persisted style data.
-	 */
-	private static function is_orphaned_code_owned_style( string $style_id, array $style ): bool {
-		if ( isset( self::$registry[ $style_id ] ) ) {
-			return false;
-		}
-
-		if ( isset( self::$retained_persisted_identities[ $style_id ] ) ) {
-			return false;
-		}
-
-		if ( isset( $style['collection'] ) && is_string( $style['collection'] ) && str_starts_with( $style['collection'], 'OhMyIDEtch' ) ) {
-			return true;
-		}
-
-		return self::is_code_owned_style_id( $style_id );
-	}
-
-	/**
-	 * Match style IDs registered by this starter's parsed CSS and builders.
-	 *
-	 * @param string $style_id Persisted style ID.
-	 */
-	private static function is_code_owned_style_id( string $style_id ): bool {
-		return 1 === preg_match( '/^(?:omide|clayo)-/', $style_id );
-	}
-
-	/**
 	 * Determine whether a registry style should overwrite DB state on register.
 	 *
 	 * @param array<string, mixed> $registry_style In-memory registry style.
@@ -1197,18 +1169,18 @@ final class Style {
 	 * Build a lookup map for selectors.
 	 *
 	 * @param array<array-key, array{selector: string}> $styles Source styles array.
-	 * @return array<string, true>
+	 * @return array<string, string>
 	 */
 	private static function build_selector_map( array $styles ): array {
 		$selectors = array();
 
-		foreach ( $styles as $style ) {
-			$selector = trim( $style['selector'] );
+		foreach ( $styles as $style_id => $style ) {
+			$selector = StylesParserRuleScanner::normalize_selector_key( $style['selector'] );
 			if ( '' === $selector ) {
 				continue;
 			}
 
-			$selectors[ $selector ] = true;
+			$selectors[ $selector ] = (string) $style_id;
 		}
 
 		return $selectors;

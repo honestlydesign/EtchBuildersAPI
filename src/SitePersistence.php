@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace HonestlyDesign\EtchBuilders;
 
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceResourceStoreInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceStoreInterface;
 use Throwable;
 
@@ -71,7 +72,46 @@ class SitePersistence implements SitePersistenceInterface {
 			$results[] = $this->apply_record( $record );
 		}
 
+		if ( $this->all_results_succeeded( $results ) && $this->store instanceof SitePersistenceResourceStoreInterface ) {
+			$this->cleanup_orphan_resources( $plan, $results );
+		}
+
 		return SitePersistenceReport::new( $results );
+	}
+
+	/**
+	 * Explicitly migrate a finite compiled resource list into recorded ownership.
+	 *
+	 * This operation is intentionally separate from apply(): legacy prefixes and
+	 * collections can authorize migration only when the caller supplies the
+	 * exact current plan and the native record matches it.
+	 */
+	public function migrate_legacy_ownership( CompiledSitePlan $plan ): RegistrationResult {
+		$blocking = array_values(
+			array_filter(
+				$plan->diagnostics(),
+				static fn ( CompiledSiteDiagnostic $diagnostic ): bool => CompiledSiteDiagnosticSeverity::ERROR === $diagnostic->severity()
+			)
+		);
+		if ( array() !== $blocking ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_BLOCKED', $blocking[0]->message() );
+		}
+
+		$ordered = $this->order_entities( $plan );
+		if ( array() !== $ordered['diagnostics'] ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_BLOCKED', $ordered['diagnostics'][0]->message() );
+		}
+
+		$ownership_diagnostics = $this->validate_ownership( $plan );
+		if ( array() !== $ownership_diagnostics ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_BLOCKED', $ownership_diagnostics[0]->message() );
+		}
+
+		if ( ! $this->store instanceof SitePersistenceResourceStoreInterface ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_LEGACY_MIGRATION_UNSUPPORTED', 'The configured Site persistence store does not support explicit legacy ownership migration.' );
+		}
+
+		return $this->store->migrate_legacy_ownership( $plan );
 	}
 
 	/**
@@ -280,6 +320,67 @@ class SitePersistence implements SitePersistenceInterface {
 			$update ? 'ETCH_SITE_PERSISTENCE_UPDATED' : 'ETCH_SITE_PERSISTENCE_CREATED',
 			$update ? 'Compiled Site record was updated.' : 'Compiled Site record was created.'
 		);
+	}
+
+	/**
+	 * Whether all active-plan results succeeded before cleanup is allowed.
+	 *
+	 * @param array<int, SitePersistenceResult> $results
+	 */
+	private function all_results_succeeded( array $results ): bool {
+		foreach ( $results as $result ) {
+			if ( ! $result->is_success() ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Clean exact previously recorded resources that are absent from this
+	 * complete replacement plan, reporting only cleanup failures.
+	 *
+	 * @param array<int, SitePersistenceResult> $results
+	 */
+	private function cleanup_orphan_resources( CompiledSitePlan $plan, array &$results ): void {
+		if ( ! $this->store instanceof SitePersistenceResourceStoreInterface ) {
+			return;
+		}
+
+		$active = array_fill_keys(
+			array_map(
+				static fn ( CompiledSiteResource $resource ): string => $resource->identity(),
+				array_merge( $plan->styles(), $plan->assets() )
+			),
+			true
+		);
+		$records = $this->store->owned_resource_records();
+		usort( $records, static fn ( SitePersistenceRecord $left, SitePersistenceRecord $right ): int => $left->identity() <=> $right->identity() );
+
+		foreach ( $records as $record ) {
+			if ( isset( $active[ $record->identity() ] ) ) {
+				continue;
+			}
+
+			try {
+				$deletion = $this->store->delete_owned_resource( $record );
+			} catch ( Throwable $throwable ) {
+				$results[] = self::failure( $record->identity(), $throwable );
+				continue;
+			}
+
+			if ( ! $deletion->is_success() ) {
+				$results[] = SitePersistenceResult::new(
+					$record->identity(),
+					SitePersistenceOutcome::FAILED,
+					$deletion->get_error_code() ?: 'ETCH_SITE_PERSISTENCE_ORPHAN_DELETE_FAILED',
+					$deletion->get_error_message() ?: 'The recorded orphan could not be deleted.'
+				);
+				continue;
+			}
+
+		}
 	}
 
 	private static function failure( string $identity, Throwable $throwable ): SitePersistenceResult {

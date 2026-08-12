@@ -403,6 +403,194 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 		 * @runInSeparateProcess
 		 * @preserveGlobalState disabled
 		 */
+		public function test_recorded_style_orphans_are_deleted_but_unrecorded_native_styles_survive(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array(
+				'etch_styles' => array(
+					'external' => array(
+						'selector'   => '.external',
+						'collection' => 'User styles',
+						'css'        => 'color: blue;',
+						'type'       => 'class',
+					),
+				),
+			);
+			$GLOBALS['etch_builders_site_persistence_posts'] = array();
+			$GLOBALS['etch_builders_site_persistence_meta']  = array();
+
+			$style = CompiledSiteResource::new( CompiledSiteResourceType::STYLE, 'style:stale', array( 'selector' => '.stale', 'css' => 'color:red;', 'type' => 'class' ) );
+			$plan  = CompiledSitePlan::from_sections(
+				styles: array( $style ),
+				ownership: array( CompiledSiteOwnership::new( 'site:root', $style->identity(), 'style' ) )
+			);
+			$persistence = new WordPressSitePersistence();
+
+			self::assertSame( array( 'created' ), $this->outcomes( $persistence->apply( $plan ) ) );
+			$removed = $persistence->apply( CompiledSitePlan::empty() );
+
+			self::assertSame( array(), $this->outcomes( $removed ) );
+			self::assertArrayNotHasKey( 'stale', $GLOBALS['etch_builders_site_persistence_options']['etch_styles'] );
+			self::assertArrayHasKey( 'external', $GLOBALS['etch_builders_site_persistence_options']['etch_styles'] );
+			self::assertArrayNotHasKey( $style->identity(), $GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_resources'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_recorded_style_cleanup_releases_a_user_modified_native_style_without_deleting_it(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array();
+			$GLOBALS['etch_builders_site_persistence_posts']  = array();
+			$GLOBALS['etch_builders_site_persistence_meta']   = array();
+
+			$style = CompiledSiteResource::new( CompiledSiteResourceType::STYLE, 'style:mutable', array( 'selector' => '.mutable', 'css' => 'color:red;', 'type' => 'class' ) );
+			$plan  = CompiledSitePlan::from_sections(
+				styles: array( $style ),
+				ownership: array( CompiledSiteOwnership::new( 'site:root', $style->identity(), 'style' ) )
+			);
+			$persistence = new WordPressSitePersistence();
+
+			$persistence->apply( $plan );
+			$GLOBALS['etch_builders_site_persistence_options']['etch_styles']['mutable']['css'] = 'user changed';
+			$removed = $persistence->apply( CompiledSitePlan::empty() );
+
+			self::assertSame( array(), $this->outcomes( $removed ) );
+			self::assertSame( 'user changed', $GLOBALS['etch_builders_site_persistence_options']['etch_styles']['mutable']['css'] );
+			self::assertArrayNotHasKey( $style->identity(), $GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_resources'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_recorded_stylesheet_cleanup_removes_only_the_exact_fragment_key(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array();
+			$GLOBALS['etch_builders_site_persistence_posts']  = array();
+			$GLOBALS['etch_builders_site_persistence_meta']   = array();
+
+			$asset = CompiledSiteResource::new(
+				CompiledSiteResourceType::ASSET,
+				'asset:stylesheet:site:root:global:stale',
+				array( 'type' => 'stylesheet', 'id' => 'global', 'path' => '/tmp/global.css', 'css' => 'body { color: red; }' )
+			);
+			$plan = CompiledSitePlan::from_sections(
+				assets: array( $asset ),
+				ownership: array( CompiledSiteOwnership::new( 'site:root', $asset->identity(), 'stylesheet' ) )
+			);
+			$persistence = new WordPressSitePersistence();
+			$persistence->apply( $plan );
+
+			$owned_key = array_key_first( $GLOBALS['etch_builders_site_persistence_options']['oh_my_id_etch_builder_stylesheet_fragments']['global'] );
+			$GLOBALS['etch_builders_site_persistence_options']['oh_my_id_etch_builder_stylesheet_fragments']['global']['site:root:foreign'] = array( 'css' => '.foreign { color: blue; }', 'file_path' => '/tmp/foreign.css' );
+			$removed = $persistence->apply( CompiledSitePlan::empty() );
+
+			self::assertSame( array(), $this->outcomes( $removed ) );
+			self::assertArrayNotHasKey( $owned_key, $GLOBALS['etch_builders_site_persistence_options']['oh_my_id_etch_builder_stylesheet_fragments']['global'] );
+			self::assertArrayHasKey( 'site:root:foreign', $GLOBALS['etch_builders_site_persistence_options']['oh_my_id_etch_builder_stylesheet_fragments']['global'] );
+			self::assertSame( ".foreign { color: blue; }\n", $GLOBALS['etch_builders_site_persistence_options']['etch_global_stylesheets']['global']['css'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_recorded_stylesheet_cleanup_preserves_a_modified_owned_fragment(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array();
+			$GLOBALS['etch_builders_site_persistence_posts']  = array();
+			$GLOBALS['etch_builders_site_persistence_meta']   = array();
+
+			$asset = CompiledSiteResource::new(
+				CompiledSiteResourceType::ASSET,
+				'asset:stylesheet:site:root:global:modified',
+				array( 'type' => 'stylesheet', 'id' => 'global', 'path' => '/tmp/global.css', 'css' => 'body { color: red; }' )
+			);
+			$plan = CompiledSitePlan::from_sections(
+				assets: array( $asset ),
+				ownership: array( CompiledSiteOwnership::new( 'site:root', $asset->identity(), 'stylesheet' ) )
+			);
+			$persistence = new WordPressSitePersistence();
+			$persistence->apply( $plan );
+
+			$key = array_key_first( $GLOBALS['etch_builders_site_persistence_options']['oh_my_id_etch_builder_stylesheet_fragments']['global'] );
+			$GLOBALS['etch_builders_site_persistence_options']['oh_my_id_etch_builder_stylesheet_fragments']['global'][ $key ]['css'] = 'user changed';
+			$removed = $persistence->apply( CompiledSitePlan::empty() );
+
+			self::assertSame( array(), $this->outcomes( $removed ) );
+			self::assertSame( 'user changed', $GLOBALS['etch_builders_site_persistence_options']['oh_my_id_etch_builder_stylesheet_fragments']['global'][ $key ]['css'] );
+			self::assertSame( "body { color: red; }\n", $GLOBALS['etch_builders_site_persistence_options']['etch_global_stylesheets']['global']['css'] );
+			self::assertArrayNotHasKey( $asset->identity(), $GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_resources'] );
+			self::assertArrayNotHasKey( 'global', $GLOBALS['etch_builders_site_persistence_options']['oh_my_id_etch_builder_stylesheets'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_legacy_ownership_migration_requires_an_explicit_exact_plan(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array(
+				'etch_styles' => array(
+					'omide-legacy' => array(
+						'selector'   => '.legacy',
+						'collection' => 'OhMyIDEtch:Legacy',
+						'css'        => 'color:red;',
+						'type'       => 'class',
+					),
+				),
+			);
+			$GLOBALS['etch_builders_site_persistence_posts'] = array();
+			$GLOBALS['etch_builders_site_persistence_meta']  = array();
+
+			$style = CompiledSiteResource::new( CompiledSiteResourceType::STYLE, 'style:omide-legacy', array( 'selector' => '.legacy', 'collection' => 'OhMyIDEtch:Legacy', 'css' => 'color:red;', 'type' => 'class' ) );
+			$plan  = CompiledSitePlan::from_sections(
+				styles: array( $style ),
+				ownership: array( CompiledSiteOwnership::new( 'site:root', $style->identity(), 'style' ) )
+			);
+			$persistence = new WordPressSitePersistence();
+
+			$migrated = $persistence->migrate_legacy_ownership( $plan );
+			self::assertTrue( $migrated->is_success() );
+			self::assertArrayHasKey( $style->identity(), $GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_resources'] );
+
+			self::assertSame( array(), $this->outcomes( $persistence->apply( CompiledSitePlan::empty() ) ) );
+			self::assertArrayNotHasKey( 'omide-legacy', $GLOBALS['etch_builders_site_persistence_options']['etch_styles'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_legacy_ownership_migration_does_not_adopt_an_unmarked_bem_style(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array(
+				'etch_styles' => array(
+					'stack' => array( 'selector' => '.stack', 'collection' => 'User styles', 'css' => 'display:grid;', 'type' => 'class' ),
+				),
+			);
+			$GLOBALS['etch_builders_site_persistence_posts'] = array();
+			$GLOBALS['etch_builders_site_persistence_meta']  = array();
+
+			$style = CompiledSiteResource::new( CompiledSiteResourceType::STYLE, 'style:stack', array( 'selector' => '.stack', 'collection' => 'User styles', 'css' => 'display:grid;', 'type' => 'class' ) );
+			$plan  = CompiledSitePlan::from_sections(
+				styles: array( $style ),
+				ownership: array( CompiledSiteOwnership::new( 'site:root', $style->identity(), 'style' ) )
+			);
+
+			$migrated = ( new WordPressSitePersistence() )->migrate_legacy_ownership( $plan );
+
+			self::assertFalse( $migrated->is_success() );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_LEGACY_OWNERSHIP_UNPROVEN', $migrated->get_error_code() );
+			self::assertArrayNotHasKey( 'etch_builders_site_persistence_resources', $GLOBALS['etch_builders_site_persistence_options'] );
+			self::assertArrayHasKey( 'stack', $GLOBALS['etch_builders_site_persistence_options']['etch_styles'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
 		public function test_applying_one_stylesheet_asset_does_not_rewrite_an_unrelated_historical_stylesheet(): void {
 			$this->install_wordpress_option_stubs();
 			$GLOBALS['etch_builders_site_persistence_options'] = array();
