@@ -29,9 +29,11 @@ final class ClassToken {
 	 */
 	public static function site_presentation( ClassStyleReference $reference ): self {
 		$reference->assert_current();
+		$token = substr( $reference->selector(), 1 );
+		ClassNamingPolicy::assert_site_presentation( $token );
 
 		return new self(
-			substr( $reference->selector(), 1 ),
+			$token,
 			ClassProvenance::SITE_PRESENTATION,
 			null,
 			$reference
