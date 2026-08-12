@@ -20,6 +20,7 @@ use HonestlyDesign\EtchBuilders\RegistrationResult;
 use HonestlyDesign\EtchBuilders\Style;
 use HonestlyDesign\EtchBuilders\Stylesheet;
 use HonestlyDesign\EtchBuilders\StylesheetReference;
+use HonestlyDesign\EtchBuilders\PatternUse;
 use RuntimeException;
 
 
@@ -170,6 +171,15 @@ abstract class AbstractContentBuilder implements ClassTokenMetadataProviderInter
 	}
 
 	/**
+	 * Append one registered Pattern Use without copying serialized markup.
+	 */
+	public function pattern_use( PatternUse $pattern_use ): static {
+		$this->content->pattern_use( $pattern_use );
+
+		return $this;
+	}
+
+	/**
 	 * Set serialized block markup.
 	 *
 	 * @param string $markup Serialized markup.
@@ -261,6 +271,15 @@ abstract class AbstractContentBuilder implements ClassTokenMetadataProviderInter
 	 */
 	public function get_class_tokens(): array {
 		return $this->content->class_tokens();
+	}
+
+	/**
+	 * Return registered Pattern dependencies nested in structured content.
+	 *
+	 * @return array<int, PatternUse>
+	 */
+	public function get_pattern_uses(): array {
+		return $this->content->pattern_uses();
 	}
 
 	/**
