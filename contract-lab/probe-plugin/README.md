@@ -21,3 +21,9 @@ Composite frontend observations are run by the maintainer-side
 DOM and stylesheet ordering, checks explicit class/slot/loop/dynamic markers,
 and treats unavailable product prerequisites as skips. It is not a browser
 harness and is not shipped to LocalWP Devkit or end users.
+
+Browser Preservation Sentinels use a separate maintainer-side browser adapter:
+the adapter owns editor controls and save actions, while the Builder API only
+compares the frontend observation before save with the observation after
+reload. Unsupported editors are explicit skips and browser transport failures
+are inconclusive; neither can promote compatibility.
