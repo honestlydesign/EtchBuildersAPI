@@ -361,7 +361,7 @@ final class StyleTest extends TestCase {
 		self::assertSame( 'class', Style::registered_styles()['legacy-style-id']['type'] );
 	}
 
-	public function test_register_all_preserves_external_readonly_styles_when_registry_is_empty(): void {
+	public function test_register_all_preserves_unrecorded_styles_when_registry_is_empty(): void {
 		Environment::reset();
 		Style::reset();
 
@@ -375,13 +375,19 @@ final class StyleTest extends TestCase {
 					'readonly'   => true,
 					'type'       => 'element',
 				),
-				'omide-stale-style' => array(
-					'selector'   => '.omide-stale-style',
-					'collection' => 'default',
-					'css'        => 'display: block;',
-					'readonly'   => true,
-					'type'       => 'class',
-				),
+			'omide-stale-style' => array(
+				'selector'   => '.omide-stale-style',
+				'collection' => 'default',
+				'css'        => 'display: block;',
+				'readonly'   => true,
+				'type'       => 'class',
+			),
+			'stack' => array(
+				'selector'   => '.stack',
+				'collection' => 'OhMyIDEtch:Auto Classes',
+				'css'        => 'display: grid;',
+				'type'       => 'class',
+			),
 			)
 		);
 
@@ -390,7 +396,35 @@ final class StyleTest extends TestCase {
 		$styles = Environment::storage()->get( 'etch_styles', array() );
 		self::assertIsArray( $styles );
 		self::assertArrayHasKey( 'etch-section-style', $styles );
-		self::assertArrayNotHasKey( 'omide-stale-style', $styles );
+		self::assertArrayHasKey( 'omide-stale-style', $styles );
+		self::assertArrayHasKey( 'stack', $styles );
+	}
+
+	public function test_register_all_preserves_an_unrecorded_same_selector_style_instead_of_deleting_it(): void {
+		$persisted = array(
+			'external-style' => array(
+				'selector'   => '.shared-selector',
+				'collection' => 'User styles',
+				'css'        => 'color: red;',
+				'type'       => 'class',
+			),
+		);
+		Environment::storage()->set( 'etch_styles', $persisted );
+
+		Style::new()
+			->id( 'builder-style' )
+			->selector( '.shared-selector' )
+			->css( 'color: blue;' )
+			->add();
+
+		try {
+			Style::register_all();
+			self::fail( 'Expected the unrecorded selector collision to remain a conflict.' );
+		} catch ( InvalidArgumentException $exception ) {
+			self::assertStringContainsString( 'external-style', $exception->getMessage() );
+		}
+
+		self::assertSame( $persisted, Environment::storage()->get( 'etch_styles', array() ) );
 	}
 
 	/**

@@ -347,6 +347,26 @@ final class EntityStyleSetTest extends TestCase {
 		self::assertSame( array( 'header-id' ), array_map( 'strval', array_keys( Environment::storage()->get( 'etch_styles', array() ) ) ) );
 	}
 
+	public function test_same_owner_reload_preserves_a_released_style_when_its_payload_changes(): void {
+		$persisted = array(
+			'hero-old-id' => array(
+				'selector'   => '.hero__old',
+				'collection' => 'OhMyIDEtch:entity:component:Hero',
+				'css'        => 'color: red',
+				'type'       => 'class',
+			),
+		);
+		Environment::storage()->set( 'etch_styles', $persisted );
+
+		self::assertSame( 'hero-old-id', ClassStyleRegistry::ensure_registered_for_class( 'hero__old' ) );
+		EntityStyleSet::from_file( 'component:Hero', $this->write_css( '' ) );
+		$persisted['hero-old-id']['css'] = 'color: user-customized';
+		Environment::storage()->set( 'etch_styles', $persisted );
+
+		self::assertTrue( Style::register_all() );
+		self::assertSame( $persisted, Environment::storage()->get( 'etch_styles', array() ) );
+	}
+
 	public function test_same_owner_reload_preserves_another_owners_retention_when_the_opaque_id_is_shared(): void {
 		$persisted = array(
 			'shared-opaque-id' => array(

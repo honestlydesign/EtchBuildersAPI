@@ -367,7 +367,7 @@ final class ClassStyleRegistryTest extends TestCase {
 		}
 	}
 
-	public function test_non_prefixed_orphan_is_detected_as_code_owned(): void {
+	public function test_non_prefixed_bem_style_is_not_treated_as_owned_without_a_record(): void {
 		$style_snapshot = Style::snapshot();
 
 		try {
@@ -389,24 +389,8 @@ final class ClassStyleRegistryTest extends TestCase {
 				)
 			);
 
-			// Orphan detection should fire: the style is in the DB but not in the in-memory registry,
-			// and it carries the code-owned collection marker.
-			$reflection = new \ReflectionClass( Style::class );
-			$method     = $reflection->getMethod( 'is_orphaned_code_owned_style' );
-			$method->setAccessible( true );
-
-			$result = $method->invoke(
-				null,
-				'stack',
-				array(
-					'selector'   => '.stack',
-					'collection' => 'OhMyIDEtch',
-					'css'        => 'display:flex',
-					'type'       => 'class',
-				)
-			);
-
-			self::assertTrue( $result, 'A style with collection=OhMyIDEtch must be detected as code-owned orphan even without an omide-/clayo- id prefix.' );
+			self::assertTrue( Style::register_all() );
+			self::assertSame( 'display:flex', Environment::storage()->get( 'etch_styles', array() )['stack']['css'] );
 		} finally {
 			ClassStyleRegistry::reset_cache();
 			Style::restore( $style_snapshot );

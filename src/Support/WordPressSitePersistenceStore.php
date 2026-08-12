@@ -12,9 +12,10 @@ namespace HonestlyDesign\EtchBuilders\Support;
 use HonestlyDesign\EtchBuilders\CompiledSiteEntity;
 use HonestlyDesign\EtchBuilders\CompiledSiteEntityType;
 use HonestlyDesign\EtchBuilders\CompiledSiteOwnership;
+use HonestlyDesign\EtchBuilders\CompiledSitePlan;
 use HonestlyDesign\EtchBuilders\CompiledSiteResource;
 use HonestlyDesign\EtchBuilders\CompiledSiteResourceType;
-use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceStoreInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceResourceStoreInterface;
 use HonestlyDesign\EtchBuilders\RegistrationResult;
 use HonestlyDesign\EtchBuilders\SiteHomePolicy;
 use HonestlyDesign\EtchBuilders\SiteHomePolicyMode;
@@ -28,7 +29,7 @@ use Throwable;
  * adapter keeps builder ownership and snapshots beside native WordPress data
  * so native records remain inspectable by Etch and other WordPress tooling.
  */
-final class WordPressSitePersistenceStore implements SitePersistenceStoreInterface {
+final class WordPressSitePersistenceStore implements SitePersistenceResourceStoreInterface {
 
 	private const OPTION_PREFIX = 'etch_builders_site_record_';
 
@@ -178,6 +179,99 @@ final class WordPressSitePersistenceStore implements SitePersistenceStoreInterfa
 		}
 
 		return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_UPDATE_FAILED', 'WordPress could not update the compiled Site persistence record.' );
+	}
+
+	/**
+	 * Return only resources with a valid, explicit prior ownership ledger.
+	 *
+	 * @return array<int, SitePersistenceRecord>
+	 */
+	public function owned_resource_records(): array {
+		$stored = \get_option( self::RESOURCE_RECORDS_OPTION, array() );
+		if ( ! is_array( $stored ) ) {
+			return array();
+		}
+
+		$records = array();
+		foreach ( $stored as $value ) {
+			if ( ! is_array( $value ) ) {
+				continue;
+			}
+
+			$record = $this->record_from_storage( $value );
+			if ( null !== $record
+				&& $record->is_owned()
+				&& array() !== $record->ownership()
+				&& in_array( $record->kind(), array( CompiledSiteResourceType::STYLE->value, CompiledSiteResourceType::ASSET->value ), true )
+			) {
+				$records[] = $record;
+			}
+		}
+
+		return $records;
+	}
+
+	public function delete_owned_resource( SitePersistenceRecord $record ): RegistrationResult {
+		$stored = $this->stored_resource( $record->identity() );
+		if ( null === $stored || ! $stored->is_owned() || array() === $stored->ownership() || $stored->fingerprint() !== $record->fingerprint() ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_CONFLICT', 'The recorded resource ownership no longer matches the native resource snapshot.' );
+		}
+
+		$result = match ( $record->kind() ) {
+			CompiledSiteResourceType::STYLE->value => $this->delete_style_resource( $record ),
+			CompiledSiteResourceType::ASSET->value => $this->delete_stylesheet_resource( $record ),
+			default => RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_UNSUPPORTED', 'The recorded resource kind cannot be reconciled.' ),
+		};
+
+		return $result;
+	}
+
+	public function migrate_legacy_ownership( CompiledSitePlan $plan ): RegistrationResult {
+		$stored = \get_option( self::RESOURCE_RECORDS_OPTION, array() );
+		if ( ! is_array( $stored ) ) {
+			$stored = array();
+		}
+
+		$next = $stored;
+		foreach ( array_merge( $plan->styles(), $plan->assets() ) as $resource ) {
+			$ownership = array_values(
+				array_filter(
+					$plan->ownership(),
+					static fn ( CompiledSiteOwnership $edge ): bool => $edge->resource_identity() === $resource->identity()
+				)
+			);
+			if ( array() === $ownership ) {
+				return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_OWNERSHIP_MISSING', sprintf( 'Legacy resource "%s" has no explicit ownership edge.', $resource->identity() ) );
+			}
+
+			if ( CompiledSiteResourceType::STYLE === $resource->type() ) {
+				$style_id = substr( $resource->identity(), strlen( 'style:' ) );
+				$styles   = \get_option( self::STYLES_OPTION, array() );
+				$native   = is_array( $styles ) ? ( $styles[ $style_id ] ?? null ) : null;
+				if ( ! is_array( $native ) || $native !== $resource->payload() || ! $this->has_legacy_style_marker( $style_id, $resource->payload() ) ) {
+					return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_LEGACY_OWNERSHIP_UNPROVEN', sprintf( 'Legacy style "%s" does not have an exact bounded ownership match.', $resource->identity() ) );
+				}
+			} elseif ( 'stylesheet' === (string) ( $resource->payload()['type'] ?? '' ) ) {
+				if ( array() === $this->existing_stylesheet_source_keys( $resource, $ownership ) ) {
+					return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_LEGACY_OWNERSHIP_UNPROVEN', sprintf( 'Legacy stylesheet asset "%s" does not have an exact bounded fragment match.', $resource->identity() ) );
+				}
+			} else {
+				return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ASSET_UNSUPPORTED', sprintf( 'Legacy migration does not support asset "%s".', $resource->identity() ) );
+			}
+
+			$record       = SitePersistenceRecord::from_resource( $resource, true, $ownership );
+			$previous     = isset( $next[ $record->identity() ] ) && is_array( $next[ $record->identity() ] ) ? $this->record_from_storage( $next[ $record->identity() ] ) : null;
+			if ( null !== $previous && $previous->fingerprint() !== $record->fingerprint() ) {
+				return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_CONFLICT', sprintf( 'A different ownership record already exists for "%s".', $record->identity() ) );
+			}
+			$next[ $record->identity() ] = $record->to_array();
+		}
+
+		if ( ! $this->update_option_if_changed( self::RESOURCE_RECORDS_OPTION, $stored, $next ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not record the explicitly migrated resource ownership.' );
+		}
+
+		return RegistrationResult::success();
 	}
 
 	private function persist_native( SitePersistenceRecord $record, string $kind, bool $update ): RegistrationResult {
@@ -940,6 +1034,158 @@ final class WordPressSitePersistenceStore implements SitePersistenceStoreInterfa
 		return $this->store_resource_snapshot( $record, $records );
 	}
 
+	private function delete_style_resource( SitePersistenceRecord $record ): RegistrationResult {
+		$styles = \get_option( self::STYLES_OPTION, array() );
+		if ( ! is_array( $styles ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_RUNTIME_UNAVAILABLE', 'The native Etch style option is not an array.' );
+		}
+
+		$style_id = substr( $record->identity(), strlen( 'style:' ) );
+		$next     = $styles;
+		$native   = $styles[ $style_id ] ?? null;
+		if ( is_array( $native ) && $this->payload_hash( $native ) === $this->payload_hash( $record->payload() ) ) {
+			unset( $next[ $style_id ] );
+		}
+
+		if ( ! $this->update_option_if_changed( self::STYLES_OPTION, $styles, $next ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not remove the recorded native Etch style.' );
+		}
+
+		return $this->remove_resource_snapshot( $record->identity() );
+	}
+
+	private function delete_stylesheet_resource( SitePersistenceRecord $record ): RegistrationResult {
+		$payload = $record->payload();
+		$id      = (string) ( $payload['id'] ?? '' );
+		if ( '' === $id ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ASSET_INVALID', 'Recorded stylesheet asset has no native stylesheet id.' );
+		}
+
+		$current_fragments = \get_option( self::BUILDER_STYLESHEET_FRAGMENTS_OPTION, array() );
+		$current_fragments = is_array( $current_fragments ) ? $current_fragments : array();
+		$next_fragments    = $current_fragments;
+		$current_sources   = is_array( $current_fragments[ $id ] ?? null ) ? $current_fragments[ $id ] : array();
+		$fragment_drifted  = false;
+		foreach ( $this->stylesheet_source_keys( $record ) as $source_key ) {
+			$source = $current_sources[ $source_key ] ?? null;
+			if ( ! is_array( $source )
+				|| (string) ( $source['css'] ?? '' ) !== (string) ( $payload['css'] ?? '' )
+				|| (string) ( $source['file_path'] ?? '' ) !== (string) ( $payload['path'] ?? '' )
+			) {
+				if ( array_key_exists( $source_key, $current_sources ) ) {
+					$fragment_drifted = true;
+				}
+				continue;
+			}
+
+			unset( $next_fragments[ $id ][ $source_key ] );
+		}
+		if ( isset( $next_fragments[ $id ] ) && array() === $next_fragments[ $id ] ) {
+			unset( $next_fragments[ $id ] );
+		}
+
+		$stylesheets = \get_option( self::GLOBAL_STYLESHEETS_OPTION, array() );
+		$stylesheets = is_array( $stylesheets ) ? $stylesheets : array();
+		$hashes      = \get_option( self::BUILDER_STYLESHEET_HASHES_OPTION, array() );
+		$hashes      = is_array( $hashes ) ? $hashes : array();
+		$current     = $stylesheets[ $id ] ?? null;
+		$owned       = is_array( $current ) && isset( $hashes[ $id ] ) && $hashes[ $id ] === $this->payload_hash( $current );
+		$next_stylesheets = $stylesheets;
+		$next_hashes      = $hashes;
+
+		if ( $fragment_drifted ) {
+			unset( $next_hashes[ $id ] );
+		} elseif ( isset( $next_fragments[ $id ] ) ) {
+			if ( $owned ) {
+				$next_stylesheets[ $id ] = array(
+					'name' => $id,
+					'css'  => $this->aggregate_fragment_css( $next_fragments[ $id ] ),
+				);
+				$next_hashes[ $id ] = $this->payload_hash( $next_stylesheets[ $id ] );
+			} else {
+				unset( $next_hashes[ $id ] );
+			}
+		} else {
+			if ( $owned ) {
+				unset( $next_stylesheets[ $id ] );
+			}
+			unset( $next_hashes[ $id ] );
+		}
+
+		if ( ! $this->update_option_if_changed( self::BUILDER_STYLESHEET_FRAGMENTS_OPTION, $current_fragments, $next_fragments ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not remove the exact recorded stylesheet fragment.' );
+		}
+		if ( ! $this->update_option_if_changed( self::GLOBAL_STYLESHEETS_OPTION, $stylesheets, $next_stylesheets ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not update the native stylesheet after orphan cleanup.' );
+		}
+		if ( ! $this->update_option_if_changed( self::BUILDER_STYLESHEET_HASHES_OPTION, $hashes, $next_hashes ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not update stylesheet ownership after orphan cleanup.' );
+		}
+
+		return $this->remove_resource_snapshot( $record->identity() );
+	}
+
+	/**
+	 * @param array<string, mixed> $stored
+	 * @return array<int, string>
+	 */
+	private function asset_source_keys_from_storage( array $stored ): array {
+		$payload = is_array( $stored['payload'] ?? null ) ? $stored['payload'] : array();
+		$owners  = is_array( $stored['ownership'] ?? null ) ? $stored['ownership'] : array();
+		$id      = (string) ( $payload['id'] ?? '' );
+		$path    = (string) ( $payload['path'] ?? '' );
+		if ( '' === $id ) {
+			return array();
+		}
+
+		$keys = array();
+		foreach ( $owners as $edge ) {
+			if ( is_array( $edge ) && is_string( $edge['owner'] ?? null ) ) {
+				$keys[] = $edge['owner'] . ':' . hash( 'sha256', $id ) . ':' . hash( 'sha256', $path );
+			}
+		}
+
+		return array_values( array_unique( $keys ) );
+	}
+
+	/**
+	 * @return array<int, string>
+	 */
+	private function stylesheet_source_keys( SitePersistenceRecord $record ): array {
+		return $this->asset_source_keys_from_storage( $record->to_array() );
+	}
+
+	/**
+	 * @param array<int, CompiledSiteOwnership> $ownership
+	 * @return array<int, string>
+	 */
+	private function existing_stylesheet_source_keys( CompiledSiteResource $resource, array $ownership ): array {
+		$payload = $resource->payload();
+		$id      = (string) ( $payload['id'] ?? '' );
+		$path    = (string) ( $payload['path'] ?? '' );
+		$stored  = \get_option( self::BUILDER_STYLESHEET_FRAGMENTS_OPTION, array() );
+		$sources = is_array( $stored ) && is_array( $stored[ $id ] ?? null ) ? $stored[ $id ] : array();
+		$matches = array();
+		foreach ( $ownership as $edge ) {
+			$key = $edge->owner_identity() . ':' . hash( 'sha256', $id ) . ':' . hash( 'sha256', $path );
+			$source = $sources[ $key ] ?? null;
+			if ( is_array( $source )
+				&& (string) ( $source['css'] ?? '' ) === (string) ( $payload['css'] ?? '' )
+				&& (string) ( $source['file_path'] ?? '' ) === $path
+			) {
+				$matches[] = $key;
+			}
+		}
+
+		return $matches;
+	}
+
+	private function has_legacy_style_marker( string $style_id, array $payload ): bool {
+		$collection = (string) ( $payload['collection'] ?? '' );
+
+		return 1 === preg_match( '/^(?:omide|clayo)-/', $style_id ) || str_starts_with( $collection, 'OhMyIDEtch' );
+	}
+
 	private function find_loop_preset( string $identity ): ?SitePersistenceRecord {
 		$loops = \get_option( self::LOOPS_OPTION, array() );
 		if ( ! is_array( $loops ) ) {
@@ -1136,6 +1382,21 @@ final class WordPressSitePersistenceStore implements SitePersistenceStoreInterfa
 		return RegistrationResult::success();
 	}
 
+	private function remove_resource_snapshot( string $identity ): RegistrationResult {
+		$records = \get_option( self::RESOURCE_RECORDS_OPTION, array() );
+		if ( ! is_array( $records ) || ! array_key_exists( $identity, $records ) ) {
+			return RegistrationResult::success();
+		}
+
+		$next = $records;
+		unset( $next[ $identity ] );
+		if ( ! $this->update_option_if_changed( self::RESOURCE_RECORDS_OPTION, $records, $next ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not remove the compiled resource ownership snapshot.' );
+		}
+
+		return RegistrationResult::success();
+	}
+
 	private function store_entity_snapshot( SitePersistenceRecord $record ): RegistrationResult {
 		$records = \get_option( self::ENTITY_RECORDS_OPTION, array() );
 		if ( ! is_array( $records ) ) {
@@ -1158,7 +1419,7 @@ final class WordPressSitePersistenceStore implements SitePersistenceStoreInterfa
 	private function build_stylesheet_state( array $records, array $current_stylesheets, string $touched_id ): array {
 		$current_fragments = \get_option( self::BUILDER_STYLESHEET_FRAGMENTS_OPTION, array() );
 		$current_fragments = is_array( $current_fragments ) ? $current_fragments : array();
-		$owners = array();
+		$owned_source_keys = array();
 
 		foreach ( $records as $stored ) {
 			if ( ! is_array( $stored ) || 'asset' !== (string) ( $stored['kind'] ?? '' ) || ! is_array( $stored['payload'] ?? null ) || 'stylesheet' !== (string) ( $stored['payload']['type'] ?? '' ) ) {
@@ -1168,10 +1429,8 @@ final class WordPressSitePersistenceStore implements SitePersistenceStoreInterfa
 			if ( '' === $id || $id !== $touched_id ) {
 				continue;
 			}
-			foreach ( is_array( $stored['ownership'] ?? null ) ? $stored['ownership'] : array() as $edge ) {
-				if ( is_array( $edge ) && is_string( $edge['owner'] ?? null ) ) {
-					$owners[ $edge['owner'] ] = true;
-				}
+			foreach ( $this->asset_source_keys_from_storage( $stored ) as $source_key ) {
+				$owned_source_keys[ $source_key ] = true;
 			}
 		}
 
@@ -1179,13 +1438,8 @@ final class WordPressSitePersistenceStore implements SitePersistenceStoreInterfa
 		if ( ! isset( $fragments[ $touched_id ] ) || ! is_array( $fragments[ $touched_id ] ) ) {
 			$fragments[ $touched_id ] = array();
 		}
-		foreach ( array_keys( $fragments[ $touched_id ] ) as $source_key ) {
-			foreach ( array_keys( $owners ) as $owner ) {
-				if ( str_starts_with( (string) $source_key, $owner . ':' ) ) {
-					unset( $fragments[ $touched_id ][ $source_key ] );
-					break;
-				}
-			}
+		foreach ( array_keys( $owned_source_keys ) as $source_key ) {
+			unset( $fragments[ $touched_id ][ $source_key ] );
 		}
 
 		foreach ( $records as $stored ) {
@@ -1197,11 +1451,7 @@ final class WordPressSitePersistenceStore implements SitePersistenceStoreInterfa
 			if ( '' === $id || $id !== $touched_id ) {
 				continue;
 			}
-			foreach ( is_array( $stored['ownership'] ?? null ) ? $stored['ownership'] : array() as $edge ) {
-				if ( ! is_array( $edge ) || ! is_string( $edge['owner'] ?? null ) ) {
-					continue;
-				}
-				$source_key = $edge['owner'] . ':' . hash( 'sha256', $id ) . ':' . hash( 'sha256', (string) ( $payload['path'] ?? '' ) );
+			foreach ( $this->asset_source_keys_from_storage( $stored ) as $source_key ) {
 				$fragments[ $id ][ $source_key ] = array(
 					'css'       => (string) ( $payload['css'] ?? '' ),
 					'file_path' => (string) ( $payload['path'] ?? '' ),
