@@ -266,13 +266,25 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	/**
 	 * Set a typed class component prop from validated ordered references.
 	 *
-	 * This is the Golden Path for top-level class properties. ClassStyleSet::none()
-	 * writes an explicit empty override rather than omitting the property.
+	 * On a keyed component this is the Golden Path for one exact Component
+	 * Contract path, including groups and concrete repeater rows. On a non-keyed
+	 * legacy component, the key remains a raw top-level attribute for source
+	 * compatibility. ClassStyleSet::none() writes an explicit empty override.
 	 *
-	 * @param string        $key Prop key.
+	 * @param string        $key Exact schema path on keyed components; raw top-level key otherwise.
 	 * @param ClassStyleSet $classes Validated ordered class-style value.
 	 */
 	public function class_prop( string $key, ClassStyleSet $classes ): self {
+		if ( null !== $this->component_key ) {
+			$this->instance_values ??= ComponentInstanceValues::for_component(
+				$this->component_key,
+				Environment::component_contracts()
+			);
+			$this->instance_values->set_class_styles( $key, $classes );
+
+			return $this;
+		}
+
 		return $this->set_prop_value( $key, ComponentPropValueEncoder::class( $classes->ids() ) );
 	}
 

@@ -9,6 +9,8 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders;
 
+use InvalidArgumentException;
+
 /**
  * Proves that an opaque style ID currently identifies one simple class selector.
  */
@@ -131,6 +133,26 @@ final class ClassStyleReference {
 	 */
 	public function selector(): string {
 		return $this->selector;
+	}
+
+	/**
+	 * Prove this opaque ID still denotes its originally validated selector.
+	 *
+	 * @throws InvalidArgumentException When current registry identity differs.
+	 */
+	public function assert_current(): void {
+		$current = self::registered( $this->id );
+
+		if ( $current->selector !== $this->selector ) {
+			throw new InvalidArgumentException(
+				sprintf(
+					'Class Style ID "%s" changed selector identity from "%s" to "%s".',
+					$this->id,
+					$this->selector,
+					$current->selector
+				)
+			);
+		}
 	}
 
 	/**

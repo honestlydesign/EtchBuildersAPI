@@ -93,6 +93,10 @@ final class ClassStyleSet {
 	 * @return array<int, string>
 	 */
 	public function ids(): array {
+		foreach ( $this->references as $reference ) {
+			$reference->assert_current();
+		}
+
 		return array_map(
 			static fn ( ClassStyleReference $reference ): string => $reference->id(),
 			$this->references

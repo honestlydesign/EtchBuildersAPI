@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders\EtchBlocks;
 
+use HonestlyDesign\EtchBuilders\ClassStyleSet;
 use HonestlyDesign\EtchBuilders\ComponentContracts\ComponentContract;
 use HonestlyDesign\EtchBuilders\ComponentContracts\ComponentPropertyPathContract;
 use HonestlyDesign\EtchBuilders\ComponentProperties\ComponentInstanceValue;
@@ -77,6 +78,29 @@ final class ComponentInstanceValues {
 	}
 
 	/**
+	 * Add one exact concrete array/class instance path.
+	 */
+	public function set_class_styles( string $path, ClassStyleSet $classes ): self {
+		$tokens   = $this->parse_path( $path );
+		$property = $this->resolve_path( $path, $tokens );
+
+		if ( 'array/class' !== $property->property_contract()->type_key() ) {
+			throw new InvalidArgumentException(
+				sprintf(
+					'Component "%s" path "%s" must be an exact array/class property; got "%s".',
+					$this->component_key(),
+					$path,
+					$property->property_contract()->type_key()
+				)
+			);
+		}
+
+		$this->insert( $path, $tokens, $classes );
+
+		return $this;
+	}
+
+	/**
 	 * Compile deterministic top-level component attributes.
 	 *
 	 * @return array<string, string>
@@ -92,6 +116,11 @@ final class ComponentInstanceValues {
 			$property = $this->property_at( $root_key );
 			if ( $value instanceof ComponentInstanceValue ) {
 				$attributes[ $root_key ] = $value->encode();
+				continue;
+			}
+
+			if ( $value instanceof ClassStyleSet ) {
+				$attributes[ $root_key ] = ComponentPropValueEncoder::class( $value->ids() );
 				continue;
 			}
 
@@ -233,7 +262,7 @@ final class ComponentInstanceValues {
 	/**
 	 * @param array<int, array{key: string, index: int|null}> $tokens Parsed path.
 	 */
-	private function insert( string $path, array $tokens, ComponentInstanceValue $value ): void {
+	private function insert( string $path, array $tokens, ComponentInstanceValue|ClassStyleSet $value ): void {
 		$node =& $this->tree;
 		$last = count( $tokens ) - 1;
 
@@ -243,7 +272,7 @@ final class ComponentInstanceValues {
 
 			if ( $is_last ) {
 				if ( array_key_exists( $key, $node ) ) {
-					$message = $node[ $key ] instanceof ComponentInstanceValue
+					$message = self::is_assignment( $node[ $key ] )
 						? 'already has an assignment'
 						: 'conflicts with existing child assignments';
 					throw new InvalidArgumentException( sprintf( 'Component instance value path "%s" %s.', $path, $message ) );
@@ -255,7 +284,7 @@ final class ComponentInstanceValues {
 
 			if ( ! array_key_exists( $key, $node ) ) {
 				$node[ $key ] = array();
-			} elseif ( $node[ $key ] instanceof ComponentInstanceValue ) {
+			} elseif ( self::is_assignment( $node[ $key ] ) ) {
 				throw new InvalidArgumentException(
 					sprintf( 'Component instance value path "%s" conflicts with an existing assignment.', $path )
 				);
@@ -273,7 +302,7 @@ final class ComponentInstanceValues {
 			$index = $token['index'];
 			if ( ! array_key_exists( $index, $node[ $key ] ) ) {
 				$node[ $key ][ $index ] = array();
-			} elseif ( $node[ $key ][ $index ] instanceof ComponentInstanceValue ) {
+			} elseif ( self::is_assignment( $node[ $key ][ $index ] ) ) {
 				throw new InvalidArgumentException(
 					sprintf( 'Component instance value path "%s" conflicts with an existing assignment.', $path )
 				);
@@ -296,7 +325,7 @@ final class ComponentInstanceValues {
 			}
 
 			$value = $node[ $key ];
-			if ( $value instanceof ComponentInstanceValue ) {
+			if ( $value instanceof ComponentInstanceValue || $value instanceof ClassStyleSet ) {
 				$group->value( $key, $value );
 				continue;
 			}
@@ -388,5 +417,9 @@ final class ComponentInstanceValues {
 
 	private static function join_path( string $prefix, string $key ): string {
 		return '' === $prefix ? $key : $prefix . '.' . $key;
+	}
+
+	private static function is_assignment( mixed $value ): bool {
+		return $value instanceof ComponentInstanceValue || $value instanceof ClassStyleSet;
 	}
 }
