@@ -12,6 +12,7 @@ namespace HonestlyDesign\EtchBuilders\EtchBlocks;
 use HonestlyDesign\EtchBuilders\ClassStyleSet;
 use HonestlyDesign\EtchBuilders\ComponentContracts\ComponentContract;
 use HonestlyDesign\EtchBuilders\ComponentContracts\ComponentPropertyPathContract;
+use HonestlyDesign\EtchBuilders\ComponentProperties\ComponentExpression;
 use HonestlyDesign\EtchBuilders\ComponentProperties\ComponentInstanceValue;
 use HonestlyDesign\EtchBuilders\ComponentProperties\PropertyContractStatus;
 use HonestlyDesign\EtchBuilders\Contracts\ComponentContractCatalogProviderInterface;
@@ -101,6 +102,42 @@ final class ComponentInstanceValues {
 	}
 
 	/**
+	 * Add one checked standalone expression to an exact concrete instance path.
+	 */
+	public function set_expression( string $path, ComponentExpression $expression ): self {
+		$tokens   = $this->parse_path( $path );
+		$property = $this->resolve_path( $path, $tokens );
+
+		if ( PropertyContractStatus::SUPPORTED !== $property->property_contract()->status() ) {
+			throw new InvalidArgumentException(
+				sprintf(
+					'Component "%s" path "%s" is not supported for authored instance expressions.',
+					$this->component_key(),
+					$path
+				)
+			);
+		}
+
+		$expected_kinds = $property->property_contract()->instance_value_kinds();
+		if ( ! in_array( $expression->expected_kind(), $expected_kinds, true ) ) {
+			$expected = implode( '", "', array_map( static fn ( $kind ): string => $kind->value, $expected_kinds ) );
+			throw new InvalidArgumentException(
+				sprintf(
+					'Component "%s" path "%s" expects expression result kind "%s"; got "%s".',
+					$this->component_key(),
+					$path,
+					$expected,
+					$expression->expected_kind()->value
+				)
+			);
+		}
+
+		$this->insert( $path, $tokens, $expression );
+
+		return $this;
+	}
+
+	/**
 	 * Compile deterministic top-level component attributes.
 	 *
 	 * @return array<string, string>
@@ -121,6 +158,11 @@ final class ComponentInstanceValues {
 
 			if ( $value instanceof ClassStyleSet ) {
 				$attributes[ $root_key ] = ComponentPropValueEncoder::class( $value->ids() );
+				continue;
+			}
+
+			if ( $value instanceof ComponentExpression ) {
+				$attributes[ $root_key ] = $value->encode();
 				continue;
 			}
 
@@ -262,7 +304,7 @@ final class ComponentInstanceValues {
 	/**
 	 * @param array<int, array{key: string, index: int|null}> $tokens Parsed path.
 	 */
-	private function insert( string $path, array $tokens, ComponentInstanceValue|ClassStyleSet $value ): void {
+	private function insert( string $path, array $tokens, ComponentInstanceValue|ClassStyleSet|ComponentExpression $value ): void {
 		$node =& $this->tree;
 		$last = count( $tokens ) - 1;
 
@@ -325,6 +367,11 @@ final class ComponentInstanceValues {
 			}
 
 			$value = $node[ $key ];
+			if ( $value instanceof ComponentExpression ) {
+				$group->value( $key, $value->encode() );
+				continue;
+			}
+
 			if ( $value instanceof ComponentInstanceValue || $value instanceof ClassStyleSet ) {
 				$group->value( $key, $value );
 				continue;
@@ -420,6 +467,8 @@ final class ComponentInstanceValues {
 	}
 
 	private static function is_assignment( mixed $value ): bool {
-		return $value instanceof ComponentInstanceValue || $value instanceof ClassStyleSet;
+		return $value instanceof ComponentInstanceValue
+			|| $value instanceof ClassStyleSet
+			|| $value instanceof ComponentExpression;
 	}
 }

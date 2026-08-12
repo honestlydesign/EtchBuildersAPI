@@ -14,6 +14,7 @@ use HonestlyDesign\EtchBuilders\Block;
 use HonestlyDesign\EtchBuilders\ClassStyleDiagnostic;
 use HonestlyDesign\EtchBuilders\ClassStyleRegistry;
 use HonestlyDesign\EtchBuilders\ClassStyleSet;
+use HonestlyDesign\EtchBuilders\ComponentProperties\ComponentExpression;
 use HonestlyDesign\EtchBuilders\ComponentProperties\ComponentInstanceValue;
 use HonestlyDesign\EtchBuilders\Environment;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Concerns\HasBlockBase;
@@ -172,6 +173,28 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 			Environment::component_contracts()
 		);
 		$this->instance_values->set( $path, $value );
+
+		return $this;
+	}
+
+	/**
+	 * Set one checked standalone expression on an exact schema-backed path.
+	 *
+	 * The declared result kind must exactly match the Component Contract. Source
+	 * availability and its runtime value remain owned by Etch.
+	 */
+	public function expression_prop( string $path, ComponentExpression $expression ): self {
+		if ( null === $this->component_key ) {
+			throw new InvalidArgumentException(
+				'Schema-backed component expression authoring requires for_key() or ref_by_key() so an exact Component Contract can be resolved.'
+			);
+		}
+
+		$this->instance_values ??= ComponentInstanceValues::for_component(
+			$this->component_key,
+			Environment::component_contracts()
+		);
+		$this->instance_values->set_expression( $path, $expression );
 
 		return $this;
 	}
