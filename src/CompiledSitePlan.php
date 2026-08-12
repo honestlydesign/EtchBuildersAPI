@@ -30,7 +30,8 @@ final class CompiledSitePlan {
 		private readonly array $styles,
 		private readonly array $assets,
 		private readonly array $ownership,
-		private readonly array $diagnostics
+		private readonly array $diagnostics,
+		private readonly ?SiteHomePolicy $home_page_policy
 	) {
 	}
 
@@ -53,7 +54,8 @@ final class CompiledSitePlan {
 		array $styles = array(),
 		array $assets = array(),
 		array $ownership = array(),
-		array $diagnostics = array()
+		array $diagnostics = array(),
+		?SiteHomePolicy $home_page_policy = null
 	): self {
 		self::assert_list_of( $entities, CompiledSiteEntity::class, 'entities' );
 		self::assert_list_of( $dependencies, CompiledSiteDependency::class, 'dependencies' );
@@ -106,7 +108,8 @@ final class CompiledSitePlan {
 			array_values( $styles ),
 			array_values( $assets ),
 			array_values( $ownership ),
-			array_values( $diagnostics )
+			array_values( $diagnostics ),
+			$home_page_policy
 		);
 	}
 
@@ -167,6 +170,23 @@ final class CompiledSitePlan {
 	}
 
 	/**
+	 * Return the explicit front-page policy compiled with the definition.
+	 *
+	 * Manually constructed plans that predate the policy section retain the
+	 * neutral no-op policy for source compatibility.
+	 */
+	public function home_page_policy(): SiteHomePolicy {
+		return $this->home_page_policy ?? SiteHomePolicy::none();
+	}
+
+	/**
+	 * Whether this plan carries an explicit home-page policy section.
+	 */
+	public function has_home_page_policy(): bool {
+		return null !== $this->home_page_policy;
+	}
+
+	/**
 	 * Whether any diagnostic blocks plan application.
 	 */
 	public function has_errors(): bool {
@@ -185,7 +205,7 @@ final class CompiledSitePlan {
 	 * @return array<string, mixed>
 	 */
 	public function to_array(): array {
-		return array(
+		$projection = array(
 			'entities'      => array_map( static fn ( CompiledSiteEntity $item ): array => $item->to_array(), $this->entities ),
 			'identities'     => $this->resolved_identities(),
 			'dependencies'   => array_map( static fn ( CompiledSiteDependency $item ): array => $item->to_array(), $this->dependencies ),
@@ -194,6 +214,12 @@ final class CompiledSitePlan {
 			'ownership'      => array_map( static fn ( CompiledSiteOwnership $item ): array => $item->to_array(), $this->ownership ),
 			'diagnostics'    => array_map( static fn ( CompiledSiteDiagnostic $item ): array => $item->to_array(), $this->diagnostics ),
 		);
+
+		if ( null !== $this->home_page_policy ) {
+			$projection['home_page'] = $this->home_page_policy->to_array();
+		}
+
+		return $projection;
 	}
 
 	/**

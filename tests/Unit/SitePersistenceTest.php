@@ -14,6 +14,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 	use HonestlyDesign\EtchBuilders\CompiledSiteDependency;
 	use HonestlyDesign\EtchBuilders\CompiledSiteEntity;
 	use HonestlyDesign\EtchBuilders\CompiledSiteEntityType;
+	use HonestlyDesign\EtchBuilders\CompiledSiteOwnership;
 	use HonestlyDesign\EtchBuilders\CompiledSitePlan;
 	use HonestlyDesign\EtchBuilders\CompiledSiteResource;
 	use HonestlyDesign\EtchBuilders\CompiledSiteResourceType;
@@ -21,6 +22,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 	use HonestlyDesign\EtchBuilders\RegistrationResult;
 	use HonestlyDesign\EtchBuilders\SitePersistenceReport;
 	use HonestlyDesign\EtchBuilders\SitePersistenceResult;
+	use HonestlyDesign\EtchBuilders\SiteHomePolicy;
 	use HonestlyDesign\EtchBuilders\Support\InMemorySitePersistence;
 	use HonestlyDesign\EtchBuilders\Support\InMemorySitePersistenceStore;
 	use HonestlyDesign\EtchBuilders\Support\WordPressSitePersistence;
@@ -200,6 +202,98 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 			self::assertSame( 0, $store->update_calls );
 		}
 
+		public function test_invalid_ownership_reference_blocks_all_writes(): void {
+			$store = new CountingSitePersistenceStore();
+			$style = CompiledSiteResource::new( CompiledSiteResourceType::STYLE, 'style:hero', array( 'css' => 'color:red;' ) );
+			$plan  = CompiledSitePlan::from_sections(
+				styles: array( $style ),
+				ownership: array( CompiledSiteOwnership::new( 'component:Missing', 'style:hero', 'style' ) )
+			);
+
+			$report = ( new InMemorySitePersistence( $store ) )->apply( $plan );
+
+			self::assertFalse( $report->is_success() );
+			self::assertTrue( $report->was_blocked() );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_OWNERSHIP_INVALID', $report->blocking_diagnostics()[0]->code() );
+			self::assertSame( 0, $store->find_calls );
+		}
+
+		public function test_catalog_is_reported_as_non_runtime_failure_instead_of_silent_success(): void {
+			$catalog = CompiledSiteEntity::new(
+				CompiledSiteEntityType::COMPONENT_CONTRACT_CATALOG,
+				'component_contract_catalog:default',
+				array( 'components' => array() )
+			);
+
+			$report = ( new InMemorySitePersistence() )->apply( CompiledSitePlan::from_sections( entities: array( $catalog ) ) );
+
+			self::assertFalse( $report->is_success() );
+			self::assertSame( 'failed', $report->results()[0]->outcome()->value );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_CATALOG_NOT_RUNTIME', $report->results()[0]->code() );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_loop_preset_uses_native_id_key_while_preserving_its_reference_key(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array(
+				'etch_loops' => array( 'foreign' => array( 'key' => 'foreign', 'config' => array( 'type' => 'main-query' ) ) ),
+			);
+			$loop = CompiledSiteEntity::new(
+				CompiledSiteEntityType::LOOP_PRESET,
+				'loop_preset:recent-posts',
+				array( 'id' => 'recent-id', 'name' => 'Recent Posts', 'key' => 'recent-posts', 'global' => true, 'config' => array( 'type' => 'main-query', 'args' => array() ) )
+			);
+
+			$persistence = new WordPressSitePersistence();
+			$created     = $persistence->apply( CompiledSitePlan::from_sections( entities: array( $loop ) ) );
+			$again       = $persistence->apply( CompiledSitePlan::from_sections( entities: array( $loop ) ) );
+
+			self::assertSame( array( 'created' ), $this->outcomes( $created ) );
+			self::assertSame( array( 'unchanged' ), $this->outcomes( $again ) );
+			/** @var array<string, mixed> $loops */
+			$loops = $GLOBALS['etch_builders_site_persistence_options']['etch_loops'];
+			self::assertArrayHasKey( 'recent-id', $loops );
+			self::assertIsArray( $loops['recent-id'] );
+			self::assertArrayNotHasKey( 'id', $loops['recent-id'] );
+			self::assertArrayHasKey( 'foreign', $loops );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_post_handler_rechecks_the_native_post_type_before_writing(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array();
+			$GLOBALS['etch_builders_site_persistence_posts']  = array();
+			$GLOBALS['etch_builders_site_persistence_meta']   = array();
+
+			$post = CompiledSiteEntity::new(
+				CompiledSiteEntityType::POST,
+				'post:book:article',
+				array( 'post_type' => 'book', 'slug' => 'article', 'post_title' => 'Article', 'blocks' => '<!-- wp:etch/text -->article<!-- /wp:etch/text -->' )
+			);
+			$persistence = new WordPressSitePersistence();
+			$created     = $persistence->apply( CompiledSitePlan::from_sections( entities: array( $post ) ) );
+			$again       = $persistence->apply( CompiledSitePlan::from_sections( entities: array( $post ) ) );
+
+			self::assertSame( array( 'created' ), $this->outcomes( $created ) );
+			self::assertSame( array( 'unchanged' ), $this->outcomes( $again ) );
+			self::assertSame( 'book', $GLOBALS['etch_builders_site_persistence_posts'][1]->post_type );
+			self::assertSame( 'Article', $GLOBALS['etch_builders_site_persistence_posts'][1]->post_title );
+
+			$GLOBALS['etch_builders_site_persistence_posts'][1]->post_type = 'post';
+			$recreated = $persistence->apply( CompiledSitePlan::from_sections( entities: array( $post ) ) );
+
+			self::assertTrue( $recreated->is_success() );
+			self::assertSame( 'created', $recreated->results()[0]->outcome()->value );
+			self::assertSame( 'post', $GLOBALS['etch_builders_site_persistence_posts'][1]->post_type );
+			self::assertSame( 'book', $GLOBALS['etch_builders_site_persistence_posts'][2]->post_type );
+		}
+
 		public function test_wordpress_adapter_shares_the_same_port_and_outcomes(): void {
 			$store       = new RecordingSitePersistenceStore();
 			$persistence = new WordPressSitePersistence( $store );
@@ -226,11 +320,149 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 
 			self::assertSame( array( 'created', 'created' ), $this->outcomes( $created ) );
 			self::assertSame( array( 'unchanged', 'unchanged' ), $this->outcomes( $again ) );
-			self::assertCount( 1, $GLOBALS['etch_builders_site_persistence_options'] );
+			self::assertCount( 2, $GLOBALS['etch_builders_site_persistence_options'] );
 			self::assertCount( 1, $GLOBALS['etch_builders_site_persistence_posts'] );
 			/** @var array<int, array<string, mixed>> $meta */
 			$meta = $GLOBALS['etch_builders_site_persistence_meta'];
 			self::assertSame( 'Hero', $meta[1]['etch_component_html_key'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_default_wordpress_adapter_persists_pages_templates_and_home_policy_natively(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array();
+			$GLOBALS['etch_builders_site_persistence_posts']  = array();
+			$GLOBALS['etch_builders_site_persistence_meta']   = array();
+			$GLOBALS['etch_builders_site_persistence_taxonomy_available'] = true;
+
+			$page = CompiledSiteEntity::new(
+				CompiledSiteEntityType::PAGE,
+				'page:slug:home',
+				array( 'slug' => 'home', 'blocks' => '<!-- wp:etch/text -->home<!-- /wp:etch/text -->', 'post_title' => 'Home', 'post_status' => 'publish' )
+			);
+			$template = CompiledSiteEntity::new(
+				CompiledSiteEntityType::TEMPLATE,
+				'template:slug:index',
+				array( 'slug' => 'index', 'blocks' => '<!-- wp:etch/text -->index<!-- /wp:etch/text -->' )
+			);
+			$plan = CompiledSitePlan::from_sections(
+				entities: array( $page, $template ),
+				home_page_policy: SiteHomePolicy::page( 'home' )
+			);
+
+			$persistence = new WordPressSitePersistence();
+			$created     = $persistence->apply( $plan );
+			$again       = $persistence->apply( $plan );
+
+			self::assertSame( array( 'created', 'created', 'created' ), $this->outcomes( $created ) );
+			self::assertSame( array( 'unchanged', 'unchanged', 'unchanged' ), $this->outcomes( $again ) );
+			self::assertSame( 'page', $GLOBALS['etch_builders_site_persistence_posts'][1]->post_type );
+			self::assertSame( 'wp_template', $GLOBALS['etch_builders_site_persistence_posts'][2]->post_type );
+			self::assertSame( 'page', $GLOBALS['etch_builders_site_persistence_options']['show_on_front'] );
+			self::assertSame( 1, $GLOBALS['etch_builders_site_persistence_options']['page_on_front'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_native_styles_and_stylesheet_assets_preserve_plan_ownership(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array();
+			$GLOBALS['etch_builders_site_persistence_posts']  = array();
+			$GLOBALS['etch_builders_site_persistence_meta']   = array();
+
+			$style = CompiledSiteResource::new( CompiledSiteResourceType::STYLE, 'style:hero', array( 'selector' => '.hero', 'css' => 'color:red;' ) );
+			$asset = CompiledSiteResource::new(
+				CompiledSiteResourceType::ASSET,
+				'asset:stylesheet:site:root:global:hash',
+				array( 'type' => 'stylesheet', 'id' => 'global', 'path' => '/tmp/global.css', 'css' => 'body { color: red; }' )
+			);
+			$ownership = array(
+				CompiledSiteOwnership::new( 'site:root', 'style:hero', 'style' ),
+				CompiledSiteOwnership::new( 'site:root', $asset->identity(), 'stylesheet' ),
+			);
+			$plan = CompiledSitePlan::from_sections( styles: array( $style ), assets: array( $asset ), ownership: $ownership );
+
+			$persistence = new WordPressSitePersistence();
+			$created     = $persistence->apply( $plan );
+			$again       = $persistence->apply( $plan );
+
+			self::assertSame( array( 'created', 'created' ), $this->outcomes( $created ) );
+			self::assertSame( array( 'unchanged', 'unchanged' ), $this->outcomes( $again ) );
+			self::assertSame( 'color:red;', $GLOBALS['etch_builders_site_persistence_options']['etch_styles']['hero']['css'] );
+			self::assertSame( "body { color: red; }\n", $GLOBALS['etch_builders_site_persistence_options']['etch_global_stylesheets']['global']['css'] );
+			$stored = $GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_resources'][ $asset->identity() ];
+			self::assertSame( array( 'owner' => 'site:root', 'resource' => $asset->identity(), 'role' => 'stylesheet' ), $stored['ownership'][0] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_applying_one_stylesheet_asset_does_not_rewrite_an_unrelated_historical_stylesheet(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array();
+			$GLOBALS['etch_builders_site_persistence_posts']  = array();
+			$GLOBALS['etch_builders_site_persistence_meta']   = array();
+
+			$first = CompiledSiteResource::new(
+				CompiledSiteResourceType::ASSET,
+				'asset:stylesheet:site:root:global:first',
+				array( 'type' => 'stylesheet', 'id' => 'global', 'path' => '/tmp/global.css', 'css' => 'body { color: red; }' )
+			);
+			$second = CompiledSiteResource::new(
+				CompiledSiteResourceType::ASSET,
+				'asset:stylesheet:site:root:editor:second',
+				array( 'type' => 'stylesheet', 'id' => 'editor', 'path' => '/tmp/editor.css', 'css' => '.editor { color: blue; }' )
+			);
+
+			$persistence = new WordPressSitePersistence();
+			$first_plan = CompiledSitePlan::from_sections(
+				assets: array( $first ),
+				ownership: array( CompiledSiteOwnership::new( 'site:root', $first->identity(), 'stylesheet' ) )
+			);
+			$second_plan = CompiledSitePlan::from_sections(
+				assets: array( $second ),
+				ownership: array( CompiledSiteOwnership::new( 'site:root', $second->identity(), 'stylesheet' ) )
+			);
+
+			self::assertSame( array( 'created' ), $this->outcomes( $persistence->apply( $first_plan ) ) );
+			$GLOBALS['etch_builders_site_persistence_options']['etch_global_stylesheets']['global']['css'] = 'historical native CSS';
+
+			self::assertSame( array( 'created' ), $this->outcomes( $persistence->apply( $second_plan ) ) );
+			self::assertSame( 'historical native CSS', $GLOBALS['etch_builders_site_persistence_options']['etch_global_stylesheets']['global']['css'] );
+			self::assertSame( ".editor { color: blue; }\n", $GLOBALS['etch_builders_site_persistence_options']['etch_global_stylesheets']['editor']['css'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_javascript_assets_fail_explicitly_before_an_asset_write(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array();
+			$GLOBALS['etch_builders_site_persistence_posts']  = array();
+			$GLOBALS['etch_builders_site_persistence_meta']   = array();
+
+			$asset = CompiledSiteResource::new(
+				CompiledSiteResourceType::ASSET,
+				'asset:javascript:site:script:hash',
+				array( 'type' => 'javascript', 'id' => 'script', 'path' => '/tmp/site.js' )
+			);
+			$plan = CompiledSitePlan::from_sections(
+				assets: array( $asset ),
+				ownership: array( CompiledSiteOwnership::new( 'site:root', $asset->identity(), 'global_asset' ) )
+			);
+
+			$report = ( new WordPressSitePersistence() )->apply( $plan );
+
+			self::assertFalse( $report->is_success() );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_ASSET_UNSUPPORTED', $report->results()[0]->code() );
+			self::assertSame( array(), $GLOBALS['etch_builders_site_persistence_options'] );
 		}
 
 		/**
@@ -586,6 +818,26 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 				}
 
 				return null;
+			}
+		}
+
+		if ( ! function_exists( 'get_post' ) ) {
+			function get_post( int $post_id ): ?object {
+				$post = $GLOBALS['etch_builders_site_persistence_posts'][ $post_id ] ?? null;
+
+				return is_object( $post ) ? $post : null;
+			}
+		}
+
+		if ( ! function_exists( 'post_type_exists' ) ) {
+			function post_type_exists( string $post_type ): bool {
+				return in_array( $post_type, array( 'post', 'page', 'wp_template', 'book' ), true );
+			}
+		}
+
+		if ( ! function_exists( 'get_stylesheet' ) ) {
+			function get_stylesheet(): string {
+				return 'test-theme';
 			}
 		}
 

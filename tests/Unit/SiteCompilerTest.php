@@ -29,6 +29,7 @@ use HonestlyDesign\EtchBuilders\PatternUse;
 use HonestlyDesign\EtchBuilders\Post;
 use HonestlyDesign\EtchBuilders\SiteCompiler;
 use HonestlyDesign\EtchBuilders\SiteDefinition;
+use HonestlyDesign\EtchBuilders\SiteHomePolicy;
 use HonestlyDesign\EtchBuilders\Support\InMemorySiteRuntimeCapabilities;
 use HonestlyDesign\EtchBuilders\Template;
 use InvalidArgumentException;
@@ -285,5 +286,35 @@ final class SiteCompilerTest extends TestCase {
 			)
 		);
 		self::assertSame( array(), $plan->dependencies() );
+	}
+
+	public function test_compiled_plan_carries_the_explicit_home_page_policy(): void {
+		$plan = SiteDefinition::new()
+			->home_page( SiteHomePolicy::page( 'home' ) )
+			->page( $this->typed_page( 'home' ) )
+			->compile();
+
+		self::assertFalse( $plan->has_errors() );
+		self::assertTrue( $plan->has_home_page_policy() );
+		self::assertSame( array( 'mode' => 'page', 'slug' => 'home' ), $plan->home_page_policy()->to_array() );
+		self::assertSame( array( 'mode' => 'page', 'slug' => 'home' ), $plan->to_array()['home_page'] );
+	}
+
+	public function test_content_entities_project_explicit_native_post_fields_without_inventing_defaults(): void {
+		$page = $this->typed_page( 'home' )->title( 'Homepage' )->status( 'draft' )->excerpt( 'Intro' );
+		$post = $this->post( 'book', 'article' )->title( 'Article' )->status( 'private' );
+		$template = $this->typed_template( 'index' )->title( 'Index template' );
+
+		$plan = SiteDefinition::new()->page( $page )->post( $post )->template( $template )->compile(
+			InMemorySiteRuntimeCapabilities::known( 'book' )
+		);
+
+		self::assertFalse( $plan->has_errors() );
+		self::assertSame(
+			array( 'blocks' => $page->get_blocks(), 'slug' => 'home', 'post_title' => 'Homepage', 'post_status' => 'draft', 'post_excerpt' => 'Intro' ),
+			$plan->entities()[0]->payload()
+		);
+		self::assertSame( array( 'blocks' => $post->get_blocks(), 'slug' => 'article', 'post_type' => 'book', 'post_title' => 'Article', 'post_status' => 'private' ), $plan->entities()[1]->payload() );
+		self::assertSame( array( 'blocks' => $template->get_blocks(), 'slug' => 'index', 'post_title' => 'Index template' ), $plan->entities()[2]->payload() );
 	}
 }
