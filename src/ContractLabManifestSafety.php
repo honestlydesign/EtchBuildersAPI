@@ -20,6 +20,8 @@ final class ContractLabManifestSafety {
 
 	private const STABLE_TOKEN_PATTERN = '/^[a-z][a-z0-9-]*$/D';
 
+	private const LOCAL_IDENTIFIER_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9._-]*$/D';
+
 	private const VERSION_ATOM_PATTERN = '/^(?:[!<>=~^]{1,2})?(?:\*|[0-9]+(?:\.(?:[0-9]+|[xX*])){0,3}(?:-[0-9A-Za-z.-]+)?)$/D';
 
 	private const FORBIDDEN_CONTENT_PATTERN = '/(?:license|secret|password|credential|token|api[\s_-]*key|private[\s_-]*key)/i';
@@ -47,6 +49,7 @@ final class ContractLabManifestSafety {
 	 * text, paths, URLs, or other opaque payloads.
 	 */
 	public static function assert_version_constraint( string $value, string $label ): void {
+		self::assert_not_forbidden( $value );
 		if ( '' === $value || trim( $value ) !== $value ) {
 			throw new InvalidArgumentException( sprintf( '%s must be a machine-checkable version constraint.', $label ) );
 		}
@@ -79,6 +82,16 @@ final class ContractLabManifestSafety {
 	}
 
 	/**
+	 * Validate a LocalWP identifier while preserving its case.
+	 */
+	public static function assert_local_identifier( string $value, string $label ): void {
+		self::assert_not_forbidden( $value );
+		if ( '' === $value || trim( $value ) !== $value || 1 !== preg_match( self::LOCAL_IDENTIFIER_PATTERN, $value ) ) {
+			throw new InvalidArgumentException( sprintf( '%s must be a stable LocalWP identifier.', $label ) );
+		}
+	}
+
+	/**
 	 * Validate one short token that cannot encode a site path or URL.
 	 */
 	public static function assert_stable_token( string $value, string $label ): void {
@@ -86,6 +99,49 @@ final class ContractLabManifestSafety {
 		if ( '' === $value || trim( $value ) !== $value || 1 !== preg_match( self::STABLE_TOKEN_PATTERN, $value ) ) {
 			throw new InvalidArgumentException( sprintf( '%s must be a stable token and must not contain a site path.', $label ) );
 		}
+	}
+
+	/**
+	 * Normalize one credential-free HTTP(S) origin.
+	 */
+	public static function normalize_origin( string $value, string $label ): string {
+		if ( '' === $value || trim( $value ) !== $value || 1 === preg_match( '/[\x00-\x20]/', $value ) ) {
+			throw new InvalidArgumentException( sprintf( '%s must be a credential-free HTTP(S) origin.', $label ) );
+		}
+		$parsed = parse_url( $value );
+		if ( ! is_array( $parsed ) ) {
+			throw new InvalidArgumentException( sprintf( '%s must be a credential-free HTTP(S) origin.', $label ) );
+		}
+		$scheme = $parsed['scheme'] ?? null;
+		$host   = $parsed['host'] ?? null;
+		if ( ! is_string( $scheme ) || ! is_string( $host ) || ! in_array( strtolower( $scheme ), array( 'http', 'https' ), true ) ) {
+			throw new InvalidArgumentException( sprintf( '%s must be a credential-free HTTP(S) origin.', $label ) );
+		}
+		if ( isset( $parsed['user'] ) || isset( $parsed['pass'] ) ) {
+			throw new InvalidArgumentException( sprintf( '%s must not contain credentials.', $label ) );
+		}
+		if ( isset( $parsed['path'] ) && '/' !== $parsed['path'] && '' !== $parsed['path'] ) {
+			throw new InvalidArgumentException( sprintf( '%s must be an origin without a site path.', $label ) );
+		}
+		if ( isset( $parsed['query'] ) || isset( $parsed['fragment'] ) ) {
+			throw new InvalidArgumentException( sprintf( '%s must be an origin without a query or fragment.', $label ) );
+		}
+
+		return rtrim( $value, '/' );
+	}
+
+	/**
+	 * Normalize one absolute path without traversal or URL syntax.
+	 */
+	public static function normalize_absolute_path( string $value, string $label ): string {
+		self::assert_not_forbidden( $value );
+		if ( '' === $value || trim( $value ) !== $value || ! str_starts_with( $value, '/' ) || 1 === preg_match( '/[\x00-\x1F\x7F]/', $value ) || str_contains( $value, '://' ) || 1 === preg_match( '#(?:^|/)\.\.?(?:/|$)#', $value ) || str_contains( $value, '//' ) ) {
+			throw new InvalidArgumentException( sprintf( '%s must be an absolute normalized path without traversal.', $label ) );
+		}
+
+		$normalized = rtrim( $value, '/' );
+
+		return '' === $normalized ? '/' : $normalized;
 	}
 
 	/**
