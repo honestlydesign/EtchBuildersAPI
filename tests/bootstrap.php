@@ -9,6 +9,20 @@ declare( strict_types=1 );
 
 require __DIR__ . '/../vendor/autoload.php';
 
+if ( ! function_exists( 'sanitize_title' ) ) {
+	/**
+	 * Minimal WordPress-free slug normalizer for public Page::slug() tests.
+	 *
+	 * @param string $title Candidate title.
+	 * @return string
+	 */
+	function sanitize_title( string $title ): string {
+		$normalized = preg_replace( '/[^a-z0-9]+/i', '-', $title );
+
+		return trim( strtolower( (string) $normalized ), '-' );
+	}
+}
+
 if ( ! function_exists( 'parse_blocks' ) ) {
 	/**
 	 * Minimal pure-PHP Gutenberg block parser for tests.
