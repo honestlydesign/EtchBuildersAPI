@@ -161,6 +161,31 @@ final class Block {
 	}
 
 	/**
+	 * Return the normalized block name for compiler traversal.
+	 */
+	public function name(): string {
+		return $this->name;
+	}
+
+	/**
+	 * Return a copy-on-write snapshot of serialized block attributes.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public function attributes(): array {
+		return $this->attributes;
+	}
+
+	/**
+	 * Return detached child snapshots in insertion order.
+	 *
+	 * @return array<int, self>
+	 */
+	public function children(): array {
+		return array_map( static fn ( self $child ): self => $child->detached_copy(), $this->children );
+	}
+
+	/**
 	 * Return a detached structural snapshot of this finite block tree.
 	 *
 	 * @throws InvalidArgumentException When the graph contains a cycle.

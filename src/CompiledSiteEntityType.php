@@ -23,4 +23,8 @@ enum CompiledSiteEntityType: string {
 	case POST = 'post';
 
 	case TEMPLATE = 'template';
+
+	case LOOP_PRESET = 'loop_preset';
+
+	case COMPONENT_CONTRACT_CATALOG = 'component_contract_catalog';
 }

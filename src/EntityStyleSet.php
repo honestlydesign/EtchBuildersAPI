@@ -99,6 +99,29 @@ final class EntityStyleSet {
 	}
 
 	/**
+	 * Return all exact selector-to-reference mappings in parser order.
+	 *
+	 * @return array<string, ClassStyleReference>
+	 */
+	public function class_references(): array {
+		return $this->class_references;
+	}
+
+	/**
+	 * Return the opaque style IDs owned by this entity set.
+	 *
+	 * @return array<int, string>
+	 */
+	public function style_ids(): array {
+		return array_values(
+			array_map(
+				static fn ( ClassStyleReference $reference ): string => $reference->id(),
+				array_values( $this->class_references )
+			)
+		);
+	}
+
+	/**
 	 * Require a stable, explicit Site Entity type and key.
 	 */
 	private static function validate_entity_id( string $entity_id ): string {

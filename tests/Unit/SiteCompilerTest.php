@@ -11,10 +11,18 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit;
 
 use HonestlyDesign\EtchBuilders\BlockSequence;
 use HonestlyDesign\EtchBuilders\Component;
+use HonestlyDesign\EtchBuilders\ClassStyleReference;
 use HonestlyDesign\EtchBuilders\CompiledSiteEntityType;
 use HonestlyDesign\EtchBuilders\Environment;
 use HonestlyDesign\EtchBuilders\EtchBlocks\TextBlock;
+use HonestlyDesign\EtchBuilders\EtchBlocks\ElementBlock;
+use HonestlyDesign\EtchBuilders\EtchBlocks\SlotPlaceholderBlock;
 use HonestlyDesign\EtchBuilders\Javascript;
+use HonestlyDesign\EtchBuilders\JavascriptAsset;
+use HonestlyDesign\EtchBuilders\LoopPreset;
+use HonestlyDesign\EtchBuilders\Style;
+use HonestlyDesign\EtchBuilders\StylesheetReference;
+use HonestlyDesign\EtchBuilders\ComponentProperties\Types\Primitive\StringProperty;
 use HonestlyDesign\EtchBuilders\Page;
 use HonestlyDesign\EtchBuilders\Pattern;
 use HonestlyDesign\EtchBuilders\PatternUse;
@@ -34,6 +42,8 @@ final class SiteCompilerTest extends TestCase {
 	protected function tearDown(): void {
 		Environment::reset();
 		Javascript::reset();
+		Style::reset();
+		LoopPreset::reset();
 		parent::tearDown();
 	}
 
@@ -187,5 +197,93 @@ final class SiteCompilerTest extends TestCase {
 		$adapter = InMemorySiteRuntimeCapabilities::known( '', 'post', 'post' );
 		self::assertTrue( $adapter->post_type_exists( 'post' ) );
 		self::assertFalse( $adapter->post_type_exists( 'page' ) );
+	}
+
+	public function test_compiler_emits_properties_styles_assets_ownership_and_loop_dependencies_without_writes(): void {
+		$style_id = Style::new()
+			->id( 'hero-style' )
+			->selector( '.hero' )
+			->owner_local_css( 'color: red;' )
+			->collection( 'OhMyIDEtch' )
+			->add();
+		$reference = ClassStyleReference::registered( $style_id );
+		$block     = ElementBlock::new()->tag( 'div' )->class_style( $reference )->to_block();
+		$loop      = LoopPreset::new( 'Recent Posts' )->key( 'recent-posts' )->main_query();
+		$loop_block = \HonestlyDesign\EtchBuilders\Block::new(
+			'loop',
+			array( 'target' => 'items', 'loopId' => 'recent-posts' )
+		);
+		$component = Component::new( 'Hero', 'Hero component' )
+			->prop( StringProperty::new( 'Title' )->key( 'title' )->default( 'Welcome' ) )
+			->blocks( BlockSequence::new()->append( $block ) );
+		$page = $this->typed_page( 'home' )->blocks_sequence( BlockSequence::new()->append( $loop_block ) );
+		$definition = SiteDefinition::new()
+			->component( $component )
+			->page( $page )
+			->supporting( $loop )
+			->global_asset( StylesheetReference::new( 'site-global', __DIR__ . '/../fixtures/test-stylesheet.css' ) )
+			->global_asset( JavascriptAsset::new( 'site-script', __DIR__ . '/../fixtures/test-script.js' ) );
+
+		$before = Environment::storage()->get( 'etch_styles', array() );
+		$plan   = $definition->compile();
+
+		self::assertFalse( $plan->has_errors() );
+		self::assertSame( array( 'component:Hero', 'page:slug:home', 'loop_preset:recent-posts' ), $plan->resolved_identities() );
+		self::assertSame( array( 'style:hero-style' ), array_map( static fn ( $resource ): string => $resource->identity(), $plan->styles() ) );
+		self::assertCount( 2, $plan->assets() );
+		self::assertContains( 'page:slug:home>loop_preset:recent-posts:loop', array_map( static fn ( $dependency ): string => $dependency->consumer_identity() . '>' . $dependency->dependency_identity() . ':' . $dependency->kind(), $plan->dependencies() ) );
+		self::assertContains( 'component:Hero>style:hero-style:presentation_class', array_map( static fn ( $ownership ): string => $ownership->owner_identity() . '>' . $ownership->resource_identity() . ':' . $ownership->role(), $plan->ownership() ) );
+		self::assertSame( $before, Environment::storage()->get( 'etch_styles', array() ) );
+		self::assertSame( 'Welcome', $plan->entities()[0]->payload()['properties'][0]['default'] );
+	}
+
+	public function test_unknown_loop_reference_is_a_stable_compiler_error(): void {
+		$page = $this->typed_page( 'home' )->blocks_sequence(
+			BlockSequence::new()->append(
+				\HonestlyDesign\EtchBuilders\Block::new( 'loop', array( 'target' => 'items', 'loopId' => 'missing-loop' ) )
+			)
+		);
+		$plan = SiteDefinition::new()->page( $page )->compile();
+
+		self::assertTrue( $plan->has_errors() );
+		self::assertSame( 'ETCH_SITE_LOOP_INVALID', $plan->diagnostics()[0]->code() );
+	}
+
+	public function test_component_root_slot_placeholder_is_valid_but_content_root_is_rejected(): void {
+		$component = Component::new( 'Card', 'Card component' )->key( 'Card' )->blocks(
+			BlockSequence::new()->append( SlotPlaceholderBlock::new()->name( 'default' ) )
+		);
+		$component_plan = SiteDefinition::new()->component( $component )->compile();
+
+		self::assertFalse( $component_plan->has_errors() );
+
+		$page = $this->typed_page( 'home' )->blocks_sequence(
+			BlockSequence::new()->append(
+				\HonestlyDesign\EtchBuilders\Block::new( 'slot-content', array( 'name' => 'default' ) )
+			)
+		);
+		$page_plan = SiteDefinition::new()->page( $page )->compile();
+
+		self::assertTrue( $page_plan->has_errors() );
+		self::assertSame( 'ETCH_SITE_COMPONENT_CONTRACT_INVALID', $page_plan->diagnostics()[0]->code() );
+	}
+
+	public function test_raw_loop_markup_is_checked_against_site_supporting_presets(): void {
+		$loop = LoopPreset::new( 'Recent Posts' )->key( 'recent-posts' )->main_query();
+		$page = Page::new();
+		$slug = new \ReflectionProperty( Page::class, 'slug' );
+		$slug->setValue( $page, 'home' );
+		$page->blocks_markup( '<!-- wp:etch/loop {"target":"items","loopId":"missing-loop"} /-->' );
+
+		$plan = SiteDefinition::new()->page( $page )->supporting( $loop )->compile();
+
+		self::assertTrue( $plan->has_errors() );
+		self::assertNotEmpty(
+			array_filter(
+				$plan->diagnostics(),
+				static fn ( $diagnostic ): bool => 'ETCH_SITE_LOOP_INVALID' === $diagnostic->code()
+			)
+		);
+		self::assertSame( array(), $plan->dependencies() );
 	}
 }

@@ -45,6 +45,13 @@ final class CompiledSiteDependency {
 		return self::new( $consumer_identity, 'pattern:' . $pattern_use->pattern_key(), 'pattern' );
 	}
 
+	/**
+	 * Create the dependency edge for a registered LoopPreset reference.
+	 */
+	public static function loop( string $consumer_identity, string $loop_key ): self {
+		return self::new( $consumer_identity, 'loop_preset:' . trim( $loop_key ), 'loop' );
+	}
+
 	public function consumer_identity(): string {
 		return $this->consumer_identity;
 	}
