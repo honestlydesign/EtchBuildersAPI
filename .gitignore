@@ -3,3 +3,4 @@
 /.env
 /.phpunit.result.cache
 /.phpstan.cache/
+/.contract-lab/
