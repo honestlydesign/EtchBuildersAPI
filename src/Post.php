@@ -51,6 +51,27 @@ final class Post extends AbstractContentBuilder {
 	}
 
 	/**
+	 * Return the configured post type, when post_type() was used.
+	 */
+	public function get_post_type(): ?string {
+		return $this->post_type;
+	}
+
+	/**
+	 * Return the configured post slug, when slug() was used.
+	 */
+	public function get_slug(): ?string {
+		return $this->slug;
+	}
+
+	/**
+	 * Return the configured post ID, when id() was used.
+	 */
+	public function get_id(): ?int {
+		return $this->post_id;
+	}
+
+	/**
 	 * Target a registered post type.
 	 *
 	 * @param string $post_type Post type slug.

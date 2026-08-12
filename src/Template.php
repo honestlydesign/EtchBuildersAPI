@@ -36,6 +36,13 @@ final class Template extends AbstractContentBuilder {
 	}
 
 	/**
+	 * Return the configured template slug, when slug() was used.
+	 */
+	public function get_slug(): ?string {
+		return $this->slug;
+	}
+
+	/**
 	 * Target a template by slug for the active theme.
 	 *
 	 * @param string $slug Template slug.

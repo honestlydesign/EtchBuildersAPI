@@ -141,6 +141,20 @@ final class LoopPreset {
 	}
 
 	/**
+	 * Return the stable preset ID used for persistence.
+	 */
+	public function get_id(): string {
+		return $this->id;
+	}
+
+	/**
+	 * Return the stable preset key used by LoopBlock references.
+	 */
+	public function get_key(): string {
+		return $this->key;
+	}
+
+	/**
 	 * Set whether the preset is global.
 	 *
 	 * @param bool $is_global Whether the preset is global.
