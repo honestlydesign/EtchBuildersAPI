@@ -12,6 +12,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit;
 use HonestlyDesign\EtchBuilders\ContractLabCandidateObservation;
 use HonestlyDesign\EtchBuilders\ContractLabCompatibilityLedger;
 use HonestlyDesign\EtchBuilders\ContractLabCompatibilityLedgerRecord;
+use HonestlyDesign\EtchBuilders\ContractLabCompatibilityReview;
 use HonestlyDesign\EtchBuilders\ContractLabObservationException;
 use HonestlyDesign\EtchBuilders\ContractLabSnapshot;
 use PHPUnit\Framework\TestCase;
@@ -106,6 +107,13 @@ final class ContractLabCompatibilityLedgerTest extends TestCase {
 			array(
 				array( 'kind' => 'pure-gate', 'status' => 'passed', 'summary' => 'PHPUnit passed.' ),
 				array( 'kind' => 'contract-lab', 'status' => 'passed', 'summary' => 'Marker and doctor passed.' ),
+			),
+			ContractLabCompatibilityReview::from_values(
+				$classification,
+				'reviewer',
+				'2026-08-12T21:30:00+00:00',
+				'Reviewed ledger evidence.',
+				array( array( 'kind' => 'maintainer-gate', 'status' => 'red' === $classification ? 'failed' : 'passed', 'summary' => 'Gate evidence was reviewed.' ) )
 			)
 		);
 	}

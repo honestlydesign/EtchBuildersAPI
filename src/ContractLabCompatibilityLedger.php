@@ -54,6 +54,9 @@ final class ContractLabCompatibilityLedger {
 				throw new ContractLabObservationException( 'malformed', 'Contract Lab compatibility ledger entries must be records.' );
 			}
 			$normalized = ContractLabCompatibilityLedgerRecord::from_array( $entry );
+			if ( null === $normalized->review() ) {
+				throw new ContractLabObservationException( 'malformed', 'Contract Lab compatibility ledger records require an auditable review.' );
+			}
 			if ( isset( $seen[ $normalized->record_id() ] ) ) {
 				throw new ContractLabObservationException( 'malformed', sprintf( 'Contract Lab compatibility ledger has duplicate record ID "%s".', $normalized->record_id() ) );
 			}
@@ -65,6 +68,9 @@ final class ContractLabCompatibilityLedger {
 	}
 
 	public function append( ContractLabCompatibilityLedgerRecord $record ): self {
+		if ( null === $record->review() ) {
+			throw new ContractLabObservationException( 'malformed', 'Contract Lab compatibility ledger writes require an auditable review.' );
+		}
 		foreach ( $this->records as $existing ) {
 			if ( $existing->record_id() === $record->record_id() ) {
 				throw new ContractLabObservationException( 'conflict', sprintf( 'Contract Lab compatibility ledger record ID "%s" already exists.', $record->record_id() ) );
