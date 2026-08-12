@@ -70,7 +70,7 @@ final class CompiledSiteDependency {
 
 	private static function validate_identity( string $identity, string $label ): string {
 		$identity = trim( $identity );
-		if ( 1 !== preg_match( '/^[a-z][a-z0-9_-]*:[A-Za-z0-9][A-Za-z0-9_.-]*$/D', $identity ) ) {
+		if ( 1 !== preg_match( '/^[a-z][a-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_.-]*)+$/D', $identity ) ) {
 			throw new InvalidArgumentException( sprintf( 'Compiled Site dependency %s identity must be a stable type:key value.', $label ) );
 		}
 

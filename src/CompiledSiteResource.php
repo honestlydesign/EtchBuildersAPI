@@ -33,7 +33,7 @@ final class CompiledSiteResource {
 	 */
 	public static function new( CompiledSiteResourceType $type, string $identity, array $payload ): self {
 		$identity = trim( $identity );
-		if ( '' === $identity || 1 !== preg_match( '/^[a-z][a-z0-9_-]*:[A-Za-z0-9][A-Za-z0-9_.-]*$/D', $identity ) ) {
+		if ( '' === $identity || 1 !== preg_match( '/^[a-z][a-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_.-]*)+$/D', $identity ) ) {
 			throw new InvalidArgumentException( 'Compiled Site resource identity must be a stable type:key value.' );
 		}
 		if ( ! str_starts_with( $identity, $type->value . ':' ) ) {

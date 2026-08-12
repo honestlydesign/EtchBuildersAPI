@@ -265,6 +265,16 @@ abstract class AbstractContentBuilder implements ClassTokenMetadataProviderInter
 	}
 
 	/**
+	 * Return serialized content at a read-only compiler boundary.
+	 *
+	 * This does not persist the entity; it only resolves file-based JavaScript
+	 * placeholders in the same way the existing registration seam does.
+	 */
+	public function get_blocks(): string {
+		return $this->content_markup();
+	}
+
+	/**
 	 * Return explicit non-wire class declarations from structured content.
 	 *
 	 * @return array<int, ClassToken>

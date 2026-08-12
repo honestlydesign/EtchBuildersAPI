@@ -219,6 +219,13 @@ final class SiteDefinition {
 	}
 
 	/**
+	 * Compile identities and dependencies without performing WordPress writes.
+	 */
+	public function compile( ?\HonestlyDesign\EtchBuilders\Contracts\SiteRuntimeCapabilitiesInterface $runtime = null ): CompiledSitePlan {
+		return SiteCompiler::compile( $this, $runtime );
+	}
+
+	/**
 	 * Return a deterministic registry projection, not an Etch wire payload.
 	 *
 	 * @return array<string, mixed>
