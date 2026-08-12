@@ -135,6 +135,52 @@ final class Block {
 	}
 
 	/**
+	 * Whether this block has one exact normalized Etch block name.
+	 *
+	 * This narrow introspection hook lets higher-level typed builders enforce
+	 * placement rules without parsing their own serialized markup.
+	 */
+	public function is_named( string $name ): bool {
+		return $this->name === self::normalize_block_name( $name );
+	}
+
+	/**
+	 * Return a detached structural snapshot of this finite block tree.
+	 *
+	 * @throws InvalidArgumentException When the graph contains a cycle.
+	 */
+	public function detached_copy(): self {
+		return $this->copy_with_ancestors( array() );
+	}
+
+	/**
+	 * Whether this tree contains one of the exact block names outside an
+	 * ownership boundary. A boundary root itself is allowed and its descendants
+	 * belong to that nested owner.
+	 *
+	 * @param array<int, string> $names Exact normalized or unprefixed Etch names.
+	 */
+	public function contains_named_outside_boundary( array $names, string $boundary ): bool {
+		if ( $this->is_named( $boundary ) ) {
+			return false;
+		}
+
+		foreach ( $names as $name ) {
+			if ( $this->is_named( $name ) ) {
+				return true;
+			}
+		}
+
+		foreach ( $this->children as $child ) {
+			if ( $child->contains_named_outside_boundary( $names, $boundary ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
 	 * Render block as serialized Gutenberg markup.
 	 */
 	public function to_string(): string {
@@ -171,6 +217,25 @@ final class Block {
 		$this->name         = $is_core_block ? self::normalize_core_block_name( $name ) : self::normalize_block_name( $name );
 
 		self::assert_attribute_keys( $this->attributes );
+	}
+
+	/**
+	 * @param array<int, true> $ancestors Active path keyed by object ID.
+	 */
+	private function copy_with_ancestors( array $ancestors ): self {
+		$object_id = spl_object_id( $this );
+		if ( isset( $ancestors[ $object_id ] ) ) {
+			throw new InvalidArgumentException( 'Block snapshot requires a finite, non-recursive block tree.' );
+		}
+		$ancestors[ $object_id ] = true;
+
+		$copy           = clone $this;
+		$copy->children = array();
+		foreach ( $this->children as $child ) {
+			$copy->children[] = $child->copy_with_ancestors( $ancestors );
+		}
+
+		return $copy;
 	}
 
 	/**

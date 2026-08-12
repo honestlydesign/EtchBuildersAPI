@@ -15,7 +15,10 @@ use HonestlyDesign\EtchBuilders\EtchBlocks\Contracts\EtchBlockBuilderInterface;
 use HonestlyDesign\EtchBuilders\Types\BlockBase;
 
 /**
- * Builds etch/slot-placeholder block with consistent fluent API.
+ * Builds etch/slot-placeholder block as a component-definition escape hatch.
+ *
+ * Slot placeholders belong to component definitions. Component instances use
+ * ComponentBlock::slot(), which emits etch/slot-content after schema validation.
  *
  * Pattern:
  *   SlotPlaceholderBlock::new()
