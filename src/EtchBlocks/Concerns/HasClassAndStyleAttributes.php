@@ -10,8 +10,10 @@ declare( strict_types=1 );
 namespace HonestlyDesign\EtchBuilders\EtchBlocks\Concerns;
 
 use InvalidArgumentException;
+use HonestlyDesign\EtchBuilders\ClassProvenance;
 use HonestlyDesign\EtchBuilders\ClassStyleReference;
 use HonestlyDesign\EtchBuilders\ClassStyleRegistry;
+use HonestlyDesign\EtchBuilders\ClassToken;
 use HonestlyDesign\EtchBuilders\Support\EtchJsonAttribute;
 use HonestlyDesign\EtchBuilders\Types\Attributes;
 
@@ -25,20 +27,84 @@ use HonestlyDesign\EtchBuilders\Types\Attributes;
 trait HasClassAndStyleAttributes {
 
 	/**
+	 * Explicit typed class declarations in attachment order.
+	 *
+	 * Legacy class()/classes() calls intentionally remain unclassified.
+	 *
+	 * @var array<int, ClassToken>
+	 */
+	private array $class_tokens = array();
+
+	/**
 	 * Atomically emit one referenced class and attach its exact opaque style ID.
 	 *
 	 * @param ClassStyleReference $reference Current exact class-style identity proof.
 	 * @return static
 	 */
 	public function class_style( ClassStyleReference $reference ): static {
-		$reference->assert_current();
-		$this->append_class_tokens( array( substr( $reference->selector(), 1 ) ) );
+		return $this->class_token( ClassToken::site_presentation( $reference ) );
+	}
 
-		if ( ! in_array( $reference->id(), $this->styles, true ) ) {
-			$this->styles[] = $reference->id();
+	/**
+	 * Attach one class through its explicit owner representation.
+	 *
+	 * @throws InvalidArgumentException When the same token already has another owner identity.
+	 */
+	public function class_token( ClassToken $class_token ): static {
+		$class_token->assert_current();
+		$token     = $class_token->token();
+		$reference = null;
+
+		$existing = $this->find_explicit_class_token( $token );
+		if ( null !== $existing ) {
+			if ( ! $existing->has_same_identity( $class_token ) ) {
+				throw new InvalidArgumentException(
+					sprintf( 'Class token "%s" already has conflicting provenance or origin on this block.', $token )
+				);
+			}
+
+			return $this;
 		}
 
+		if (
+			ClassProvenance::SITE_PRESENTATION !== $class_token->provenance()
+			&& in_array( $token, $this->extract_class_tokens_from_attributes(), true )
+		) {
+			throw new InvalidArgumentException(
+				sprintf(
+					'Class token "%s" was already emitted through the unclassified legacy lane and cannot be relabelled as a non-site class. Attach its ClassToken before any legacy class API.',
+					$token
+				)
+			);
+		}
+
+		if ( ClassProvenance::SITE_PRESENTATION === $class_token->provenance() ) {
+			$reference = $class_token->style_reference();
+			if ( null === $reference ) {
+				throw new InvalidArgumentException( 'A site presentation class requires an exact Class Style Reference.' );
+			}
+		}
+
+		$this->append_class_tokens( array( $token ) );
+
+		if ( null !== $reference ) {
+			if ( ! in_array( $reference->id(), $this->styles, true ) ) {
+				$this->styles[] = $reference->id();
+			}
+		}
+
+		$this->class_tokens[] = $class_token;
+
 		return $this;
+	}
+
+	/**
+	 * Return explicit class metadata for the immutable Block snapshot.
+	 *
+	 * @return array<int, ClassToken>
+	 */
+	protected function explicit_class_tokens(): array {
+		return $this->class_tokens;
 	}
 
 	/**
@@ -53,7 +119,7 @@ trait HasClassAndStyleAttributes {
 
 		$this->append_class_tokens( array( $class_name ) );
 		ClassStyleRegistry::sync_block_class_style_linkage(
-			$this->extract_class_tokens_from_attributes(),
+			$this->unclassified_class_tokens( $this->extract_class_tokens_from_attributes() ),
 			$this->styles
 		);
 
@@ -116,7 +182,10 @@ trait HasClassAndStyleAttributes {
 		}
 
 		$this->append_class_tokens( $class_tokens );
-		ClassStyleRegistry::sync_block_class_style_linkage( $class_tokens, $this->styles );
+		ClassStyleRegistry::sync_block_class_style_linkage(
+			$this->unclassified_class_tokens( $class_tokens ),
+			$this->styles
+		);
 	}
 
 	/**
@@ -130,6 +199,28 @@ trait HasClassAndStyleAttributes {
 		foreach ( $attrs->to_array() as $name => $value ) {
 			$this->set_attribute_value( $name, $value );
 		}
+
+		$emitted_tokens = $this->extract_class_tokens_from_attributes();
+		foreach ( $this->class_tokens as $index => $class_token ) {
+			$token = $class_token->token();
+			if ( in_array( $token, $emitted_tokens, true ) ) {
+				continue;
+			}
+
+			$reference = $class_token->style_reference();
+			if ( null !== $reference ) {
+				$this->styles = array_values(
+					array_filter(
+						$this->styles,
+						static fn ( string $style_id ): bool => $style_id !== $reference->id()
+					)
+				);
+			}
+
+			unset( $this->class_tokens[ $index ] );
+		}
+
+		$this->class_tokens = array_values( $this->class_tokens );
 	}
 
 	/**
@@ -137,9 +228,37 @@ trait HasClassAndStyleAttributes {
 	 */
 	protected function sync_standalone_class_style_linkage(): void {
 		ClassStyleRegistry::sync_block_class_style_linkage(
-			$this->extract_class_tokens_from_attributes(),
+			$this->unclassified_class_tokens( $this->extract_class_tokens_from_attributes() ),
 			$this->styles
 		);
+	}
+
+	/**
+	 * Remove explicitly owned tokens from legacy selector-to-style synchronization.
+	 *
+	 * @param array<int, string> $class_tokens Emitted HTML class tokens.
+	 * @return array<int, string>
+	 */
+	private function unclassified_class_tokens( array $class_tokens ): array {
+		return array_values(
+			array_filter(
+				$class_tokens,
+				fn ( string $class_token ): bool => null === $this->find_explicit_class_token( $class_token )
+			)
+		);
+	}
+
+	/**
+	 * Find an explicitly declared token without relying on PHP array-key coercion.
+	 */
+	private function find_explicit_class_token( string $token ): ?ClassToken {
+		foreach ( $this->class_tokens as $class_token ) {
+			if ( $token === $class_token->token() ) {
+				return $class_token;
+			}
+		}
+
+		return null;
 	}
 
 	/**
@@ -176,12 +295,16 @@ trait HasClassAndStyleAttributes {
 	 * @return array<int, string>
 	 */
 	private function extract_class_tokens( string $class_names ): array {
-		$class_names = trim( $class_names );
 		if ( '' === $class_names ) {
 			return array();
 		}
 
-		$class_tokens = preg_split( '/\s+/', $class_names );
+		$class_tokens = preg_split(
+			'/[\x09\x0A\x0C\x0D\x20]+/',
+			$class_names,
+			-1,
+			PREG_SPLIT_NO_EMPTY
+		);
 		if ( false === $class_tokens ) {
 			return array();
 		}
@@ -189,11 +312,6 @@ trait HasClassAndStyleAttributes {
 		$normalized_tokens = array();
 
 		foreach ( $class_tokens as $class_token ) {
-			$class_token = trim( $class_token );
-			if ( '' === $class_token ) {
-				continue;
-			}
-
 			if ( ! in_array( $class_token, $normalized_tokens, true ) ) {
 				$normalized_tokens[] = $class_token;
 			}

@@ -11,6 +11,7 @@ namespace HonestlyDesign\EtchBuilders\Content;
 
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\Block;
+use HonestlyDesign\EtchBuilders\ClassToken;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Contracts\EtchBlockBuilderInterface;
 
 /**
@@ -120,5 +121,22 @@ final class ContentBuffer {
 		}
 
 		throw new InvalidArgumentException( 'Content builder requires non-empty content.' );
+	}
+
+	/**
+	 * Return explicit class declarations retained by structured blocks.
+	 *
+	 * Raw markup intentionally remains unclassified.
+	 *
+	 * @return array<int, ClassToken>
+	 */
+	public function class_tokens(): array {
+		$class_tokens = array();
+
+		foreach ( $this->blocks as $block ) {
+			$class_tokens = array_merge( $class_tokens, $block->class_tokens_in_tree() );
+		}
+
+		return $class_tokens;
 	}
 }

@@ -11,6 +11,8 @@ namespace HonestlyDesign\EtchBuilders\Content;
 
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\Block;
+use HonestlyDesign\EtchBuilders\ClassToken;
+use HonestlyDesign\EtchBuilders\Contracts\ClassTokenMetadataProviderInterface;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Contracts\EtchBlockBuilderInterface;
 use HonestlyDesign\EtchBuilders\Javascript;
 use HonestlyDesign\EtchBuilders\RegistrationResult;
@@ -23,7 +25,7 @@ use RuntimeException;
 /**
  * Provides common content, ownership, title, and status behavior.
  */
-abstract class AbstractContentBuilder {
+abstract class AbstractContentBuilder implements ClassTokenMetadataProviderInterface {
 
 	/**
 	 * Allowed post statuses.
@@ -235,6 +237,15 @@ abstract class AbstractContentBuilder {
 	 */
 	protected function content_markup(): string {
 		return Javascript::inject_placeholders( $this->content->to_markup() );
+	}
+
+	/**
+	 * Return explicit non-wire class declarations from structured content.
+	 *
+	 * @return array<int, ClassToken>
+	 */
+	public function get_class_tokens(): array {
+		return $this->content->class_tokens();
 	}
 
 	/**

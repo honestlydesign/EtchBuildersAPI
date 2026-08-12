@@ -60,6 +60,13 @@ final class Block {
 	private bool $self_closing;
 
 	/**
+	 * Non-wire class ownership metadata in attachment order.
+	 *
+	 * @var array<int, ClassToken>
+	 */
+	private array $class_tokens;
+
+	/**
 	 * Child blocks.
 	 *
 	 * @var array<int, self>
@@ -71,10 +78,11 @@ final class Block {
 	 *
 	 * @param string               $name Block name with or without etch/ prefix.
 	 * @param array<string, mixed> $attributes Block attributes.
-	 * @throws InvalidArgumentException When block name or attributes are invalid.
+	 * @param array<int, ClassToken> $class_tokens Explicit non-wire class metadata.
+	 * @throws InvalidArgumentException When block name, attributes, or class metadata are invalid.
 	 */
-	public static function new( string $name, array $attributes = array() ): self {
-		return new self( $name, $attributes, false );
+	public static function new( string $name, array $attributes = array(), array $class_tokens = array() ): self {
+		return new self( $name, $attributes, false, false, $class_tokens );
 	}
 
 	/**
@@ -82,10 +90,11 @@ final class Block {
 	 *
 	 * @param string               $name Block name with or without etch/ prefix.
 	 * @param array<string, mixed> $attributes Block attributes.
-	 * @throws InvalidArgumentException When block name or attributes are invalid.
+	 * @param array<int, ClassToken> $class_tokens Explicit non-wire class metadata.
+	 * @throws InvalidArgumentException When block name, attributes, or class metadata are invalid.
 	 */
-	public static function new_self_closing( string $name, array $attributes = array() ): self {
-		return new self( $name, $attributes, true );
+	public static function new_self_closing( string $name, array $attributes = array(), array $class_tokens = array() ): self {
+		return new self( $name, $attributes, true, false, $class_tokens );
 	}
 
 	/**
@@ -154,6 +163,30 @@ final class Block {
 	}
 
 	/**
+	 * Return explicit non-wire class declarations for compiler policy checks.
+	 *
+	 * @return array<int, ClassToken>
+	 */
+	public function class_tokens(): array {
+		return $this->class_tokens;
+	}
+
+	/**
+	 * Return explicit class declarations from this complete block tree.
+	 *
+	 * @return array<int, ClassToken>
+	 */
+	public function class_tokens_in_tree(): array {
+		$class_tokens = $this->class_tokens;
+
+		foreach ( $this->children as $child ) {
+			$class_tokens = array_merge( $class_tokens, $child->class_tokens_in_tree() );
+		}
+
+		return $class_tokens;
+	}
+
+	/**
 	 * Whether this tree contains one of the exact block names outside an
 	 * ownership boundary. A boundary root itself is allowed and its descendants
 	 * belong to that nested owner.
@@ -209,14 +242,106 @@ final class Block {
 	 * @param string               $name Block name.
 	 * @param array<string, mixed> $attributes Block attributes.
 	 * @param bool                 $self_closing Whether the block is self-closing.
-	 * @throws InvalidArgumentException When block name is invalid.
+	 * @param array<int, ClassToken> $class_tokens Explicit non-wire class metadata.
+	 * @throws InvalidArgumentException When block name or class metadata is invalid.
 	 */
-	private function __construct( string $name, array $attributes, bool $self_closing, bool $is_core_block = false ) {
+	private function __construct(
+		string $name,
+		array $attributes,
+		bool $self_closing,
+		bool $is_core_block = false,
+		array $class_tokens = array()
+	) {
+		self::assert_attribute_keys( $attributes );
+
 		$this->attributes   = $attributes;
 		$this->self_closing = $self_closing;
 		$this->name         = $is_core_block ? self::normalize_core_block_name( $name ) : self::normalize_block_name( $name );
+		$this->class_tokens = self::validate_class_tokens( $class_tokens, $attributes );
+	}
 
-		self::assert_attribute_keys( $this->attributes );
+	/**
+	 * Validate and deduplicate explicit class metadata in attachment order.
+	 *
+	 * @param array<array-key, mixed> $class_tokens Explicit class declarations.
+	 * @param array<string, mixed>    $attributes   Complete serialized block attributes.
+	 * @return array<int, ClassToken>
+	 */
+	private static function validate_class_tokens( array $class_tokens, array $attributes ): array {
+		$validated     = array();
+		$emitted       = self::emitted_class_tokens( $attributes );
+		$attached_ids  = isset( $attributes['styles'] ) && is_array( $attributes['styles'] )
+			? $attributes['styles']
+			: array();
+
+		foreach ( $class_tokens as $class_token ) {
+			if ( ! ( $class_token instanceof ClassToken ) ) {
+				throw new InvalidArgumentException( 'Block class metadata must contain only ClassToken values.' );
+			}
+			$token = $class_token->token();
+
+			foreach ( $validated as $prior ) {
+				if ( $token !== $prior->token() ) {
+					continue;
+				}
+
+				if ( ! $prior->has_same_identity( $class_token ) ) {
+					throw new InvalidArgumentException(
+						sprintf( 'Block class token "%s" has conflicting provenance metadata.', $token )
+					);
+				}
+
+				continue 2;
+			}
+
+			$class_token->assert_current();
+
+			if ( ! in_array( $token, $emitted, true ) ) {
+				throw new InvalidArgumentException(
+					sprintf( 'Block class metadata for "%s" requires the same emitted HTML class token.', $token )
+				);
+			}
+
+			if ( ClassProvenance::SITE_PRESENTATION === $class_token->provenance() ) {
+				$reference = $class_token->style_reference();
+				if ( null === $reference || ! in_array( $reference->id(), $attached_ids, true ) ) {
+					throw new InvalidArgumentException(
+						sprintf( 'Site presentation class "%s" requires its exact opaque style ID on the same block.', $token )
+					);
+				}
+			}
+
+			$validated[] = $class_token;
+		}
+
+		return $validated;
+	}
+
+	/**
+	 * Extract the unchanged HTML class tokens from serialized block attributes.
+	 *
+	 * @param array<string, mixed> $attributes Complete serialized block attributes.
+	 * @return array<int, string>
+	 */
+	private static function emitted_class_tokens( array $attributes ): array {
+		$html_attributes = isset( $attributes['attributes'] ) && is_array( $attributes['attributes'] )
+			? $attributes['attributes']
+			: array();
+		$class_names = isset( $html_attributes['class'] ) && is_string( $html_attributes['class'] )
+			? $html_attributes['class']
+			: '';
+
+		if ( '' === $class_names ) {
+			return array();
+		}
+
+		$tokens = preg_split(
+			'/[\x09\x0A\x0C\x0D\x20]+/',
+			$class_names,
+			-1,
+			PREG_SPLIT_NO_EMPTY
+		);
+		return false === $tokens ? array() : array_values( array_unique( $tokens ) );
 	}
 
 	/**

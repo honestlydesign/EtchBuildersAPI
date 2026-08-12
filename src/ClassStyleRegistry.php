@@ -484,9 +484,14 @@ final class ClassStyleRegistry {
 	 *
 	 * @param array<string, mixed> $block             Parsed block.
 	 * @param array<string, string> $selector_to_id_map Selector to style ID map.
+	 * @param array<int, string>    $ignored_class_tokens Explicit non-Etch class tokens.
 	 * @return array<int, string> Error messages.
 	 */
-	public static function validate_block_class_style_linkage( array $block, array $selector_to_id_map ): array {
+	public static function validate_block_class_style_linkage(
+		array $block,
+		array $selector_to_id_map,
+		array $ignored_class_tokens = array()
+	): array {
 		$errors = array();
 		$attrs  = $block['attrs'] ?? null;
 
@@ -512,7 +517,7 @@ final class ClassStyleRegistry {
 		}
 
 		foreach ( self::split_class_tokens( $attributes['class'] ) as $class_token ) {
-			if ( self::should_skip_class_token( $class_token ) ) {
+			if ( self::should_skip_class_token( $class_token ) || in_array( $class_token, $ignored_class_tokens, true ) ) {
 				continue;
 			}
 
@@ -552,22 +557,23 @@ final class ClassStyleRegistry {
 	 * @return array<int, string>
 	 */
 	public static function split_class_tokens( string $class_value ): array {
-		$class_value = trim( $class_value );
 		if ( '' === $class_value ) {
 			return array();
 		}
 
-		$parts = preg_split( '/\s+/', $class_value );
+		$parts = preg_split(
+			'/[\x09\x0A\x0C\x0D\x20]+/',
+			$class_value,
+			-1,
+			PREG_SPLIT_NO_EMPTY
+		);
 		if ( false === $parts ) {
 			return array();
 		}
 
 		$tokens = array();
 		foreach ( $parts as $part ) {
-			$part = trim( $part );
-			if ( '' !== $part ) {
-				$tokens[] = $part;
-			}
+			$tokens[] = $part;
 		}
 
 		return $tokens;
@@ -667,9 +673,13 @@ final class ClassStyleRegistry {
 	 * Validate Rule F: standalone class styles must be linked when attrs.styles is set.
 	 *
 	 * @param array<string, mixed> $block Parsed block.
+	 * @param array<int, string>   $ignored_class_tokens Explicit non-Etch class tokens.
 	 * @return array<int, string> Error messages.
 	 */
-	public static function validate_block_standalone_class_linkage( array $block ): array {
+	public static function validate_block_standalone_class_linkage(
+		array $block,
+		array $ignored_class_tokens = array()
+	): array {
 		$errors = array();
 		$attrs  = $block['attrs'] ?? null;
 
@@ -695,7 +705,7 @@ final class ClassStyleRegistry {
 		}
 
 		foreach ( self::split_class_tokens( $attributes['class'] ) as $class_token ) {
-			if ( self::should_skip_class_token( $class_token ) ) {
+			if ( self::should_skip_class_token( $class_token ) || in_array( $class_token, $ignored_class_tokens, true ) ) {
 				continue;
 			}
 
@@ -846,9 +856,14 @@ final class ClassStyleRegistry {
 	private static function collect_class_tokens_from_markup_regex( string $blocks_markup ): array {
 		$tokens = array();
 
-		if ( preg_match_all( '/"class"\s*:\s*"([^"]+)"/', $blocks_markup, $matches ) ) {
+		if ( preg_match_all( '/"class"\s*:\s*("(?:\\\\.|[^"\\\\])*")/', $blocks_markup, $matches ) ) {
 			foreach ( $matches[1] as $class_value ) {
-				foreach ( self::split_class_tokens( $class_value ) as $class_token ) {
+				$decoded = json_decode( $class_value );
+				if ( ! is_string( $decoded ) ) {
+					continue;
+				}
+
+				foreach ( self::split_class_tokens( $decoded ) as $class_token ) {
 					$tokens[] = $class_token;
 				}
 			}
