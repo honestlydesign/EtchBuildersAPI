@@ -11,6 +11,7 @@ namespace HonestlyDesign\EtchBuilders\Content;
 
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\Block;
+use HonestlyDesign\EtchBuilders\BlockSequence;
 use HonestlyDesign\EtchBuilders\ClassToken;
 use HonestlyDesign\EtchBuilders\Contracts\ClassTokenMetadataProviderInterface;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Contracts\EtchBlockBuilderInterface;
@@ -150,6 +151,20 @@ abstract class AbstractContentBuilder implements ClassTokenMetadataProviderInter
 	 */
 	public function block( Block|EtchBlockBuilderInterface $block ): static {
 		$this->content->block( $block );
+
+		return $this;
+	}
+
+	/**
+	 * Append an ordered typed sibling sequence.
+	 *
+	 * This keeps composition structural until content_markup() is reached;
+	 * callers do not need to concatenate serialized block strings.
+	 *
+	 * @param BlockSequence $sequence Ordered typed blocks.
+	 */
+	public function blocks_sequence( BlockSequence $sequence ): static {
+		$this->content->sequence( $sequence );
 
 		return $this;
 	}

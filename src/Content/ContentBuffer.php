@@ -11,6 +11,7 @@ namespace HonestlyDesign\EtchBuilders\Content;
 
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\Block;
+use HonestlyDesign\EtchBuilders\BlockSequence;
 use HonestlyDesign\EtchBuilders\ClassToken;
 use HonestlyDesign\EtchBuilders\EtchBlocks\Contracts\EtchBlockBuilderInterface;
 
@@ -37,11 +38,11 @@ final class ContentBuffer {
 	private ?string $mode = null;
 
 	/**
-	 * Structured blocks.
+	 * Structured sibling sequence.
 	 *
-	 * @var array<int, Block>
+	 * @var BlockSequence
 	 */
-	private array $blocks = array();
+	private BlockSequence $blocks;
 
 	/**
 	 * Raw serialized block markup.
@@ -53,7 +54,9 @@ final class ContentBuffer {
 	/**
 	 * Constructor.
 	 */
-	private function __construct() {}
+	private function __construct() {
+		$this->blocks = BlockSequence::new();
+	}
 
 	/**
 	 * Create a new content buffer.
@@ -73,8 +76,29 @@ final class ContentBuffer {
 			throw new InvalidArgumentException( 'Content builder cannot mix blocks_markup() with block().' );
 		}
 
-		$this->mode     = self::MODE_BLOCKS;
-		$this->blocks[] = $block instanceof EtchBlockBuilderInterface ? $block->to_block() : $block;
+		$this->mode = self::MODE_BLOCKS;
+		$this->blocks->append( $block );
+
+		return $this;
+	}
+
+	/**
+	 * Append one typed sibling sequence.
+	 *
+	 * @param BlockSequence $sequence Ordered typed blocks.
+	 * @throws InvalidArgumentException When raw markup mode is already active.
+	 */
+	public function sequence( BlockSequence $sequence ): self {
+		if ( self::MODE_MARKUP === $this->mode ) {
+			throw new InvalidArgumentException( 'Content builder cannot mix blocks_markup() with sequence().' );
+		}
+
+		if ( $sequence->is_empty() ) {
+			throw new InvalidArgumentException( 'Content builder sequence requires at least one block.' );
+		}
+
+		$this->mode = self::MODE_BLOCKS;
+		$this->blocks->append_many( $sequence->to_blocks() );
 
 		return $this;
 	}
@@ -110,14 +134,8 @@ final class ContentBuffer {
 			return $this->markup;
 		}
 
-		if ( self::MODE_BLOCKS === $this->mode && array() !== $this->blocks ) {
-			$markup = '';
-
-			foreach ( $this->blocks as $block ) {
-				$markup .= $block->to_string();
-			}
-
-			return $markup;
+		if ( self::MODE_BLOCKS === $this->mode && ! $this->blocks->is_empty() ) {
+			return $this->blocks->to_markup();
 		}
 
 		throw new InvalidArgumentException( 'Content builder requires non-empty content.' );
@@ -131,12 +149,6 @@ final class ContentBuffer {
 	 * @return array<int, ClassToken>
 	 */
 	public function class_tokens(): array {
-		$class_tokens = array();
-
-		foreach ( $this->blocks as $block ) {
-			$class_tokens = array_merge( $class_tokens, $block->class_tokens_in_tree() );
-		}
-
-		return $class_tokens;
+		return $this->blocks->class_tokens();
 	}
 }

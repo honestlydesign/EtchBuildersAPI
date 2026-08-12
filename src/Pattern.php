@@ -57,6 +57,11 @@ final class Pattern implements ClassTokenMetadataProviderInterface {
 	private string $blocks = '';
 
 	/**
+	 * Typed block sequence retained until get_blocks() is requested.
+	 */
+	private ?BlockSequence $block_sequence = null;
+
+	/**
 	 * Non-wire class ownership retained when blocks are supplied structurally.
 	 *
 	 * @var array<int, ClassToken>
@@ -143,29 +148,36 @@ final class Pattern implements ClassTokenMetadataProviderInterface {
 	/**
 	 * Set the blocks markup.
 	 *
-	 * @param string|Block|EtchBlockBuilderInterface $blocks Raw markup/path or a structured block.
+	 * @param string|Block|EtchBlockBuilderInterface|BlockSequence $blocks Raw markup/path or typed blocks.
 	 * @throws RuntimeException When the local file cannot be read.
 	 */
-	public function blocks( string|Block|EtchBlockBuilderInterface $blocks ): self {
+	public function blocks( string|Block|EtchBlockBuilderInterface|BlockSequence $blocks ): self {
 		if ( is_string( $blocks ) ) {
 			$this->blocks       = $this->resolve_blocks_input( $blocks );
+			$this->block_sequence = null;
 			$this->class_tokens = array();
 			return $this;
 		}
 
-		$block              = $blocks instanceof EtchBlockBuilderInterface ? $blocks->to_block() : $blocks;
-		$this->blocks       = $block->to_string();
-		$this->class_tokens = $block->class_tokens_in_tree();
+		if ( $blocks instanceof BlockSequence && $blocks->is_empty() ) {
+			throw new InvalidArgumentException( 'Pattern blocks sequence requires at least one block.' );
+		}
+
+		$this->block_sequence = $blocks instanceof BlockSequence
+			? BlockSequence::from( $blocks->to_blocks() )
+			: BlockSequence::from( array( $blocks ) );
+		$this->blocks       = '';
+		$this->class_tokens = $this->block_sequence->class_tokens();
 		return $this;
 	}
 
 	/**
 	 * Alias for blocks().
 	 *
-	 * @param string|Block|EtchBlockBuilderInterface $blocks_or_path Raw markup/path or a structured block.
+	 * @param string|Block|EtchBlockBuilderInterface|BlockSequence $blocks_or_path Raw markup/path or typed blocks.
 	 * @throws RuntimeException When the local file cannot be read.
 	 */
-	public function add_blocks( string|Block|EtchBlockBuilderInterface $blocks_or_path ): self {
+	public function add_blocks( string|Block|EtchBlockBuilderInterface|BlockSequence $blocks_or_path ): self {
 		return $this->blocks( $blocks_or_path );
 	}
 
@@ -194,7 +206,7 @@ final class Pattern implements ClassTokenMetadataProviderInterface {
 	 * Gets serialized Gutenberg blocks markup.
 	 */
 	public function get_blocks(): string {
-		return $this->blocks;
+		return null !== $this->block_sequence ? $this->block_sequence->to_markup() : $this->blocks;
 	}
 
 	/**
@@ -203,7 +215,7 @@ final class Pattern implements ClassTokenMetadataProviderInterface {
 	 * @return array<int, ClassToken>
 	 */
 	public function get_class_tokens(): array {
-		return $this->class_tokens;
+		return null !== $this->block_sequence ? $this->block_sequence->class_tokens() : $this->class_tokens;
 	}
 
 	/**
