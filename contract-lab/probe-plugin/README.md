@@ -15,3 +15,9 @@ public Etch runtime-resolution outcome for style loading. WordPress IDs,
 URLs, CSS bodies, arbitrary posts, and private Etch implementation data never
 cross the response boundary. Missing runtime surfaces remain inconclusive;
 they are not reported as compatibility failures or successes.
+
+Composite frontend observations are run by the maintainer-side
+`ContractLabFrontendProbe` with root-relative HTTP fixtures. The probe keeps
+DOM and stylesheet ordering, checks explicit class/slot/loop/dynamic markers,
+and treats unavailable product prerequisites as skips. It is not a browser
+harness and is not shipped to LocalWP Devkit or end users.
