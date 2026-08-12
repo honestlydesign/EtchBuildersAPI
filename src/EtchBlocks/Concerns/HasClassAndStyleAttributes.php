@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace HonestlyDesign\EtchBuilders\EtchBlocks\Concerns;
 
 use InvalidArgumentException;
+use HonestlyDesign\EtchBuilders\ClassStyleReference;
 use HonestlyDesign\EtchBuilders\ClassStyleRegistry;
 use HonestlyDesign\EtchBuilders\Support\EtchJsonAttribute;
 use HonestlyDesign\EtchBuilders\Types\Attributes;
@@ -22,6 +23,23 @@ use HonestlyDesign\EtchBuilders\Types\Attributes;
  * - a private array $styles property.
  */
 trait HasClassAndStyleAttributes {
+
+	/**
+	 * Atomically emit one referenced class and attach its exact opaque style ID.
+	 *
+	 * @param ClassStyleReference $reference Current exact class-style identity proof.
+	 * @return static
+	 */
+	public function class_style( ClassStyleReference $reference ): static {
+		$reference->assert_current();
+		$this->append_class_tokens( array( substr( $reference->selector(), 1 ) ) );
+
+		if ( ! in_array( $reference->id(), $this->styles, true ) ) {
+			$this->styles[] = $reference->id();
+		}
+
+		return $this;
+	}
 
 	/**
 	 * Add a class token and matching style ID.
