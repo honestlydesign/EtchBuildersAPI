@@ -128,6 +128,8 @@ final class ComponentContractCatalogTest extends TestCase {
 					'styling.rootClass',
 					'items[].itemClass',
 				),
+				'status'               => 'pending',
+				'recipe_ids'           => array(),
 			),
 			$contract->to_array()
 		);

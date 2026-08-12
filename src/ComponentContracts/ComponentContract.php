@@ -14,7 +14,8 @@ use HonestlyDesign\EtchBuilders\Support\AcyclicArrayGuard;
 use InvalidArgumentException;
 
 /**
- * Contains only observable authoring schema facts, never component rendering code.
+ * Contains observable schema facts plus curated authoring admission metadata,
+ * never component rendering code.
  */
 final class ComponentContract {
 
@@ -45,13 +46,20 @@ final class ComponentContract {
 	 */
 	private readonly array $class_property_paths;
 
+	private readonly ComponentContractMetadata $metadata;
+
 	/**
 	 * Build a contract projection from Etch's observable component schema.
 	 *
 	 * @param array<int, array<string, mixed>> $property_definitions etch_component_properties value.
 	 * @param array<int, mixed>                $slot_names Slot placeholder names from component blocks.
 	 */
-	public static function from_schema( string $component_key, array $property_definitions, array $slot_names ): self {
+	public static function from_schema(
+		string $component_key,
+		array $property_definitions,
+		array $slot_names,
+		?ComponentContractMetadata $metadata = null
+	): self {
 		if ( ! array_is_list( $property_definitions ) ) {
 			throw new InvalidArgumentException( 'Component property schema must be a list.' );
 		}
@@ -59,7 +67,7 @@ final class ComponentContract {
 		$properties = array();
 		self::project_definitions( $property_definitions, '', '', $properties );
 
-		return new self( $component_key, $properties, $slot_names );
+		return new self( $component_key, $properties, $slot_names, $metadata ?? ComponentContractMetadata::pending() );
 	}
 
 	/**
@@ -68,8 +76,13 @@ final class ComponentContract {
 	 * @param array<int, ComponentPropertyPathContract> $properties Ordered path records.
 	 * @param array<int, mixed>                         $slot_names Slot names.
 	 */
-	private static function from_property_contracts( string $component_key, array $properties, array $slot_names ): self {
-		return new self( $component_key, $properties, $slot_names );
+	private static function from_property_contracts(
+		string $component_key,
+		array $properties,
+		array $slot_names,
+		ComponentContractMetadata $metadata
+	): self {
+		return new self( $component_key, $properties, $slot_names, $metadata );
 	}
 
 	/**
@@ -82,7 +95,7 @@ final class ComponentContract {
 
 		self::assert_exact_keys(
 			$record,
-			array( 'component_key', 'properties', 'slots', 'class_property_paths' ),
+			array( 'component_key', 'properties', 'slots', 'class_property_paths', 'status', 'recipe_ids' ),
 			'Accepted component record'
 		);
 
@@ -104,7 +117,13 @@ final class ComponentContract {
 			$properties[] = ComponentPropertyPathContract::from_array( $property_record );
 		}
 
-		$contract = self::from_property_contracts( $component_key, $properties, $slots );
+		$metadata = ComponentContractMetadata::from_array(
+			array(
+				'status'     => $record['status'],
+				'recipe_ids' => $record['recipe_ids'],
+			)
+		);
+		$contract = self::from_property_contracts( $component_key, $properties, $slots, $metadata );
 		if ( $accepted_class_paths !== $contract->class_property_paths() ) {
 			throw new InvalidArgumentException( 'Accepted component class_property_paths must match paths derived from exact array/class records.' );
 		}
@@ -120,9 +139,15 @@ final class ComponentContract {
 	 * @param array<int, ComponentPropertyPathContract> $properties Ordered path records.
 	 * @param array<int, mixed>                         $slot_names Slot names.
 	 */
-	private function __construct( string $component_key, array $properties, array $slot_names ) {
+	private function __construct(
+		string $component_key,
+		array $properties,
+		array $slot_names,
+		ComponentContractMetadata $metadata
+	) {
 		$this->component_key = self::validate_component_key( $component_key );
 		$this->slots         = self::validate_slots( $slot_names );
+		$this->metadata      = $metadata;
 
 		if ( ! array_is_list( $properties ) ) {
 			throw new InvalidArgumentException( 'Component property path contracts must be a list.' );
@@ -250,6 +275,17 @@ final class ComponentContract {
 		return $this->class_property_paths;
 	}
 
+	public function status(): ComponentContractStatus {
+		return $this->metadata->status();
+	}
+
+	/**
+	 * @return array<int, string>
+	 */
+	public function recipe_ids(): array {
+		return $this->metadata->recipe_ids();
+	}
+
 	/**
 	 * Return deterministic machine-readable contract data.
 	 *
@@ -264,6 +300,8 @@ final class ComponentContract {
 			),
 			'slots'                => $this->slots,
 			'class_property_paths' => $this->class_property_paths,
+			'status'               => $this->metadata->status()->value,
+			'recipe_ids'           => $this->metadata->recipe_ids(),
 		);
 	}
 
