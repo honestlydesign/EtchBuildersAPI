@@ -10,10 +10,12 @@ declare( strict_types=1 );
 namespace HonestlyDesign\EtchBuilders\Tests\Unit;
 
 use HonestlyDesign\EtchBuilders\Contracts\AssetRegistryInterface;
+use HonestlyDesign\EtchBuilders\Contracts\ComponentContractCatalogProviderInterface;
 use HonestlyDesign\EtchBuilders\Contracts\ModeProviderInterface;
 use HonestlyDesign\EtchBuilders\Contracts\StorageInterface;
 use HonestlyDesign\EtchBuilders\Environment;
 use HonestlyDesign\EtchBuilders\Support\NullAssetRegistry;
+use HonestlyDesign\EtchBuilders\Support\InMemoryComponentContractCatalogProvider;
 use HonestlyDesign\EtchBuilders\Support\NullMode;
 use HonestlyDesign\EtchBuilders\Support\NullStorage;
 use PHPUnit\Framework\TestCase;
@@ -52,6 +54,12 @@ final class EnvironmentTest extends TestCase {
 		self::assertInstanceOf( AssetRegistryInterface::class, Environment::assets() );
 	}
 
+	public function test_component_contracts_default_to_an_empty_in_memory_provider(): void {
+		self::assertInstanceOf( ComponentContractCatalogProviderInterface::class, Environment::component_contracts() );
+		self::assertInstanceOf( InMemoryComponentContractCatalogProvider::class, Environment::component_contracts() );
+		self::assertSame( array( 'components' => array() ), Environment::component_contracts()->catalog()->to_array() );
+	}
+
 	public function test_configure_swaps_implementations(): void {
 		$storage = new NullStorage();
 		$mode    = new NullMode();
@@ -63,13 +71,30 @@ final class EnvironmentTest extends TestCase {
 		self::assertSame( $assets, Environment::assets() );
 	}
 
+	public function test_configure_swaps_the_optional_component_contract_provider(): void {
+		$provider = InMemoryComponentContractCatalogProvider::empty();
+
+		Environment::configure(
+			new NullStorage(),
+			new NullMode(),
+			new NullAssetRegistry(),
+			null,
+			$provider
+		);
+
+		self::assertSame( $provider, Environment::component_contracts() );
+	}
+
 	public function test_reset_restores_defaults(): void {
-		$storage = new NullStorage();
-		Environment::configure( $storage, new NullMode(), new NullAssetRegistry() );
+		$storage  = new NullStorage();
+		$provider = InMemoryComponentContractCatalogProvider::empty();
+		Environment::configure( $storage, new NullMode(), new NullAssetRegistry(), null, $provider );
 		self::assertSame( $storage, Environment::storage() );
+		self::assertSame( $provider, Environment::component_contracts() );
 
 		Environment::reset();
 		self::assertNotSame( $storage, Environment::storage() );
 		self::assertInstanceOf( NullStorage::class, Environment::storage() );
+		self::assertNotSame( $provider, Environment::component_contracts() );
 	}
 }

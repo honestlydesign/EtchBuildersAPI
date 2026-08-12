@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace HonestlyDesign\EtchBuilders\ComponentContracts;
 
 use HonestlyDesign\EtchBuilders\ComponentProperties\PropertyContractMatrix;
+use HonestlyDesign\EtchBuilders\Support\AcyclicArrayGuard;
 use InvalidArgumentException;
 
 /**
@@ -51,35 +52,125 @@ final class ComponentContract {
 	 * @param array<int, mixed>                $slot_names Slot placeholder names from component blocks.
 	 */
 	public static function from_schema( string $component_key, array $property_definitions, array $slot_names ): self {
-		return new self( $component_key, $property_definitions, $slot_names );
-	}
-
-	/**
-	 * @param array<int, array<string, mixed>> $property_definitions Etch property definitions.
-	 * @param array<int, mixed>                $slot_names Slot names.
-	 */
-	private function __construct( string $component_key, array $property_definitions, array $slot_names ) {
-		$this->component_key = self::validate_component_key( $component_key );
-		$this->slots         = self::validate_slots( $slot_names );
-
 		if ( ! array_is_list( $property_definitions ) ) {
 			throw new InvalidArgumentException( 'Component property schema must be a list.' );
 		}
 
-		$properties                = array();
+		$properties = array();
+		self::project_definitions( $property_definitions, '', '', $properties );
+
+		return new self( $component_key, $properties, $slot_names );
+	}
+
+	/**
+	 * Build from already validated path records, as used by accepted projections.
+	 *
+	 * @param array<int, ComponentPropertyPathContract> $properties Ordered path records.
+	 * @param array<int, mixed>                         $slot_names Slot names.
+	 */
+	private static function from_property_contracts( string $component_key, array $properties, array $slot_names ): self {
+		return new self( $component_key, $properties, $slot_names );
+	}
+
+	/**
+	 * Rehydrate one accepted machine-readable component contract record.
+	 *
+	 * @param array<string, mixed> $record Accepted component record.
+	 */
+	public static function from_array( array $record ): self {
+		AcyclicArrayGuard::assert_acyclic( $record );
+
+		self::assert_exact_keys(
+			$record,
+			array( 'component_key', 'properties', 'slots', 'class_property_paths' ),
+			'Accepted component record'
+		);
+
+		$component_key        = $record['component_key'];
+		$property_records     = $record['properties'];
+		$slots                = $record['slots'];
+		$accepted_class_paths = $record['class_property_paths'];
+		if ( ! is_string( $component_key ) || ! is_array( $property_records ) || ! array_is_list( $property_records )
+			|| ! is_array( $slots ) || ! is_array( $accepted_class_paths )
+		) {
+			throw new InvalidArgumentException( 'Accepted component record fields have invalid shapes.' );
+		}
+
+		$properties = array();
+		foreach ( $property_records as $property_record ) {
+			if ( ! is_array( $property_record ) ) {
+				throw new InvalidArgumentException( 'Accepted component properties must be object records.' );
+			}
+			$properties[] = ComponentPropertyPathContract::from_array( $property_record );
+		}
+
+		$contract = self::from_property_contracts( $component_key, $properties, $slots );
+		if ( $accepted_class_paths !== $contract->class_property_paths() ) {
+			throw new InvalidArgumentException( 'Accepted component class_property_paths must match paths derived from exact array/class records.' );
+		}
+
+		if ( self::canonicalize_object( $record ) !== self::canonicalize_object( $contract->to_array() ) ) {
+			throw new InvalidArgumentException( 'Accepted component record must be a canonical model projection.' );
+		}
+
+		return $contract;
+	}
+
+	/**
+	 * @param array<int, ComponentPropertyPathContract> $properties Ordered path records.
+	 * @param array<int, mixed>                         $slot_names Slot names.
+	 */
+	private function __construct( string $component_key, array $properties, array $slot_names ) {
+		$this->component_key = self::validate_component_key( $component_key );
+		$this->slots         = self::validate_slots( $slot_names );
+
+		if ( ! array_is_list( $properties ) ) {
+			throw new InvalidArgumentException( 'Component property path contracts must be a list.' );
+		}
+
 		$properties_by_declaration = array();
 		$properties_by_value       = array();
 		$class_property_paths      = array();
+		$declaration_indexes       = array();
 
-		self::project_definitions(
-			$property_definitions,
-			'',
-			'',
-			$properties,
-			$properties_by_declaration,
-			$properties_by_value,
-			$class_property_paths
-		);
+		foreach ( $properties as $index => $property ) {
+			if ( ! $property instanceof ComponentPropertyPathContract ) {
+				throw new InvalidArgumentException( 'Component property path contracts must use ComponentPropertyPathContract.' );
+			}
+
+			$declaration_path = $property->declaration_path();
+			if ( isset( $properties_by_declaration[ $declaration_path ] ) ) {
+				throw new InvalidArgumentException( sprintf( 'Component property schema has duplicate declaration path "%s".', $declaration_path ) );
+			}
+			$properties_by_declaration[ $declaration_path ] = $property;
+			$declaration_indexes[ $declaration_path ]       = $index;
+
+			$value_path = $property->value_path();
+			if ( null === $value_path ) {
+				continue;
+			}
+
+			if ( isset( $properties_by_value[ $value_path ] ) ) {
+				throw new InvalidArgumentException( sprintf( 'Component property schema has ambiguous value path "%s".', $value_path ) );
+			}
+			$properties_by_value[ $value_path ] = $property;
+
+			if ( $property->is_class_property() ) {
+				$class_property_paths[] = $value_path;
+			}
+		}
+
+		$previous_declaration_path = null;
+		foreach ( $properties as $index => $property ) {
+			self::assert_structural_path(
+				$property,
+				$index,
+				$properties_by_declaration,
+				$declaration_indexes
+			);
+			self::assert_canonical_preorder( $property->declaration_path(), $previous_declaration_path );
+			$previous_declaration_path = $property->declaration_path();
+		}
 
 		$this->properties                     = $properties;
 		$this->properties_by_declaration_path = $properties_by_declaration;
@@ -166,18 +257,12 @@ final class ComponentContract {
 	 *
 	 * @param array<int, array<string, mixed>>                  $definitions Property definitions at this level.
 	 * @param array<int, ComponentPropertyPathContract>         $properties Ordered output records.
-	 * @param array<string, ComponentPropertyPathContract>      $by_declaration Declaration lookup.
-	 * @param array<string, ComponentPropertyPathContract>      $by_value Effective value lookup.
-	 * @param array<int, string>                                $class_paths Exact array/class value paths.
 	 */
 	private static function project_definitions(
 		array $definitions,
 		string $declaration_prefix,
 		string $value_prefix,
-		array &$properties,
-		array &$by_declaration,
-		array &$by_value,
-		array &$class_paths
+		array &$properties
 	): void {
 		if ( ! array_is_list( $definitions ) ) {
 			throw new InvalidArgumentException( 'Component child property schema must be a list.' );
@@ -190,9 +275,6 @@ final class ComponentContract {
 
 			$key              = self::definition_key( $definition );
 			$declaration_path = self::join_path( $declaration_prefix, $key );
-			if ( isset( $by_declaration[ $declaration_path ] ) ) {
-				throw new InvalidArgumentException( sprintf( 'Component property schema has duplicate declaration path "%s".', $declaration_path ) );
-			}
 
 			$type              = self::definition_type( $definition, $declaration_path );
 			$primitive         = $type['primitive'];
@@ -225,19 +307,7 @@ final class ComponentContract {
 				$definition['default'] ?? null
 			);
 
-			$properties[]                       = $property;
-			$by_declaration[ $declaration_path ] = $property;
-
-			if ( null !== $value_path ) {
-				if ( isset( $by_value[ $value_path ] ) ) {
-					throw new InvalidArgumentException( sprintf( 'Component property schema has ambiguous value path "%s".', $value_path ) );
-				}
-
-				$by_value[ $value_path ] = $property;
-				if ( $property->is_class_property() ) {
-					$class_paths[] = $value_path;
-				}
-			}
+			$properties[] = $property;
 
 			if ( ! $is_structural ) {
 				continue;
@@ -255,10 +325,7 @@ final class ComponentContract {
 				$children,
 				$declaration_path,
 				$child_value_prefix,
-				$properties,
-				$by_declaration,
-				$by_value,
-				$class_paths
+				$properties
 			);
 		}
 	}
@@ -307,6 +374,148 @@ final class ComponentContract {
 
 	private static function join_path( string $prefix, string $key ): string {
 		return '' === $prefix ? $key : $prefix . '.' . $key;
+	}
+
+	/**
+	 * @param array<string, mixed> $record Record to inspect.
+	 * @param array<int, string>   $expected_keys Exact allowed keys.
+	 */
+	private static function assert_exact_keys( array $record, array $expected_keys, string $context ): void {
+		$actual_keys = array_keys( $record );
+		sort( $actual_keys );
+		sort( $expected_keys );
+		if ( $actual_keys !== $expected_keys ) {
+			throw new InvalidArgumentException(
+				sprintf( '%s must contain exactly the keys: %s.', $context, implode( ', ', $expected_keys ) )
+			);
+		}
+	}
+
+	/**
+	 * Require every flattened record to belong to one coherent schema tree.
+	 *
+	 * @param array<string, ComponentPropertyPathContract> $by_declaration Complete declaration lookup.
+	 * @param array<string, int>                           $declaration_indexes Declaration order lookup.
+	 */
+	private static function assert_structural_path(
+		ComponentPropertyPathContract $property,
+		int $index,
+		array $by_declaration,
+		array $declaration_indexes
+	): void {
+		$declaration_path = $property->declaration_path();
+		$separator        = strrpos( $declaration_path, '.' );
+		$key              = false === $separator ? $declaration_path : substr( $declaration_path, $separator + 1 );
+		$value_prefix     = '';
+
+		if ( false !== $separator ) {
+			$parent_path = substr( $declaration_path, 0, $separator );
+			if ( ! isset( $by_declaration[ $parent_path ] ) ) {
+				throw new InvalidArgumentException(
+					sprintf( 'Component property "%s" has missing parent declaration path "%s".', $declaration_path, $parent_path )
+				);
+			}
+
+			if ( $declaration_indexes[ $parent_path ] >= $index ) {
+				throw new InvalidArgumentException(
+					sprintf( 'Component property parent "%s" must precede child "%s".', $parent_path, $declaration_path )
+				);
+			}
+
+			$value_prefix = self::child_value_prefix( $by_declaration[ $parent_path ], $by_declaration );
+		}
+
+		$expected_value_path = 'string/condition' === $property->property_contract()->type_key()
+			? null
+			: self::join_path( $value_prefix, $key );
+
+		if ( $expected_value_path !== $property->value_path() ) {
+			throw new InvalidArgumentException(
+				sprintf( 'Component property "%s" value path does not match its structural parent.', $declaration_path )
+			);
+		}
+	}
+
+	/**
+	 * Prevent a flattened record list from returning to an already closed subtree.
+	 */
+	private static function assert_canonical_preorder( string $declaration_path, ?string $previous_path ): void {
+		$separator = strrpos( $declaration_path, '.' );
+		if ( false === $separator ) {
+			return;
+		}
+
+		$parent_path = substr( $declaration_path, 0, $separator );
+		if ( null === $previous_path
+			|| ( $previous_path !== $parent_path && ! str_starts_with( $previous_path, $parent_path . '.' ) )
+		) {
+			throw new InvalidArgumentException(
+				sprintf( 'Component property "%s" re-enters a completed declaration subtree.', $declaration_path )
+			);
+		}
+	}
+
+	/**
+	 * Compute the effective prefix inherited by direct children of one parent.
+	 *
+	 * @param array<string, ComponentPropertyPathContract> $by_declaration Complete declaration lookup.
+	 */
+	private static function child_value_prefix( ComponentPropertyPathContract $parent, array $by_declaration ): string {
+		$type_key   = $parent->property_contract()->type_key();
+		$value_path = $parent->value_path();
+		if ( 'object/group' === $type_key && null !== $value_path ) {
+			return $value_path;
+		}
+
+		if ( 'array/repeater' === $type_key && null !== $value_path ) {
+			return $value_path . '[]';
+		}
+
+		if ( 'string/condition' === $type_key ) {
+			$declaration_path = $parent->declaration_path();
+			$separator        = strrpos( $declaration_path, '.' );
+			if ( false === $separator ) {
+				return '';
+			}
+
+			$grandparent_path = substr( $declaration_path, 0, $separator );
+			if ( ! isset( $by_declaration[ $grandparent_path ] ) ) {
+				throw new InvalidArgumentException(
+					sprintf( 'Component condition "%s" has missing parent declaration path "%s".', $declaration_path, $grandparent_path )
+				);
+			}
+
+			return self::child_value_prefix( $by_declaration[ $grandparent_path ], $by_declaration );
+		}
+
+		throw new InvalidArgumentException(
+			sprintf( 'Component property "%s" cannot contain child property definitions.', $parent->declaration_path() )
+		);
+	}
+
+	/**
+	 * Sort associative object keys recursively while preserving list order.
+	 *
+	 * @return mixed
+	 */
+	private static function canonicalize_object( mixed $value ): mixed {
+		if ( ! is_array( $value ) ) {
+			return $value;
+		}
+
+		if ( array_is_list( $value ) ) {
+			return array_map( static fn ( mixed $item ): mixed => self::canonicalize_object( $item ), $value );
+		}
+
+		$keys = array_keys( $value );
+		sort( $keys );
+
+		$result = array();
+		foreach ( $keys as $key ) {
+			$result[ $key ] = self::canonicalize_object( $value[ $key ] );
+		}
+
+		return $result;
 	}
 
 	private static function validate_component_key( string $component_key ): string {

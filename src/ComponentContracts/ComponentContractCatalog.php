@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders\ComponentContracts;
 
+use HonestlyDesign\EtchBuilders\Support\AcyclicArrayGuard;
 use InvalidArgumentException;
 
 /**
@@ -28,6 +29,36 @@ final class ComponentContractCatalog {
 
 	public static function from_contracts( ComponentContract ...$contracts ): self {
 		return new self( array_values( $contracts ) );
+	}
+
+	/**
+	 * Rehydrate an accepted machine-readable catalog projection.
+	 *
+	 * @param array<string, mixed> $record Accepted catalog record.
+	 */
+	public static function from_array( array $record ): self {
+		AcyclicArrayGuard::assert_acyclic( $record );
+
+		$keys = array_keys( $record );
+		sort( $keys );
+		if ( array( 'components' ) !== $keys ) {
+			throw new InvalidArgumentException( 'Accepted catalog must contain exactly the keys: components.' );
+		}
+
+		$component_records = $record['components'];
+		if ( ! is_array( $component_records ) || ! array_is_list( $component_records ) ) {
+			throw new InvalidArgumentException( 'Accepted catalog components must be a list.' );
+		}
+
+		$contracts = array();
+		foreach ( $component_records as $component_record ) {
+			if ( ! is_array( $component_record ) ) {
+				throw new InvalidArgumentException( 'Accepted catalog components must be object records.' );
+			}
+			$contracts[] = ComponentContract::from_array( $component_record );
+		}
+
+		return new self( $contracts );
 	}
 
 	/**

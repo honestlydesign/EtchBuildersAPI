@@ -11,6 +11,7 @@ namespace HonestlyDesign\EtchBuilders\ComponentContracts;
 
 use HonestlyDesign\EtchBuilders\ComponentProperties\PropertyContract;
 use HonestlyDesign\EtchBuilders\ComponentProperties\PropertyContractMatrix;
+use HonestlyDesign\EtchBuilders\Support\AcyclicArrayGuard;
 use InvalidArgumentException;
 use JsonException;
 use ReflectionReference;
@@ -29,6 +30,55 @@ final class ComponentPropertyPathContract {
 	private readonly bool $has_default;
 
 	private readonly mixed $default_value;
+
+	/**
+	 * Rehydrate one accepted machine-readable property path record.
+	 *
+	 * @param array<string, mixed> $record Accepted record.
+	 */
+	public static function from_array( array $record ): self {
+		AcyclicArrayGuard::assert_acyclic( $record );
+
+		$has_default = $record['has_default'] ?? null;
+		if ( ! is_bool( $has_default ) ) {
+			throw new InvalidArgumentException( 'Accepted component property record must declare boolean has_default.' );
+		}
+
+		if ( ! $has_default && array_key_exists( 'default', $record ) ) {
+			throw new InvalidArgumentException( 'Accepted component property has_default=false cannot include default.' );
+		}
+
+		if ( $has_default && ! array_key_exists( 'default', $record ) ) {
+			throw new InvalidArgumentException( 'Accepted component property has_default=true must include default.' );
+		}
+
+		$expected_keys = array( 'declaration_path', 'value_path', 'property_contract', 'has_default' );
+		if ( $has_default ) {
+			$expected_keys[] = 'default';
+		}
+		self::assert_exact_keys( $record, $expected_keys, 'Accepted component property record' );
+
+		$declaration_path = $record['declaration_path'];
+		$value_path       = $record['value_path'];
+		$contract_record  = $record['property_contract'];
+		if ( ! is_string( $declaration_path ) || ( null !== $value_path && ! is_string( $value_path ) ) ) {
+			throw new InvalidArgumentException( 'Accepted component property paths must be strings or a null transparent value path.' );
+		}
+
+		if ( ! is_array( $contract_record ) ) {
+			throw new InvalidArgumentException( 'Accepted component property must include a Property Contract Matrix record.' );
+		}
+
+		$property_contract = self::canonical_property_contract( $contract_record );
+
+		return new self(
+			$declaration_path,
+			$value_path,
+			$property_contract,
+			$has_default,
+			$record['default'] ?? null
+		);
+	}
 
 	/**
 	 * Constructor.
@@ -174,6 +224,79 @@ final class ComponentPropertyPathContract {
 
 			++$declaration_index;
 		}
+	}
+
+	/**
+	 * Resolve and verify a complete canonical matrix projection.
+	 *
+	 * @param array<string, mixed> $record Serialized property contract.
+	 */
+	private static function canonical_property_contract( array $record ): PropertyContract {
+		self::assert_exact_keys(
+			$record,
+			array( 'type', 'definition_builder', 'instance_value_kinds', 'wire_shape', 'status' ),
+			'Accepted property contract'
+		);
+
+		$type = $record['type'];
+		if ( ! is_array( $type ) || array_is_list( $type ) ) {
+			throw new InvalidArgumentException( 'Accepted property contract type must be an object.' );
+		}
+
+		$primitive   = $type['primitive'] ?? null;
+		$specialized = $type['specialized'] ?? null;
+		if ( ! is_string( $primitive ) || ( null !== $specialized && ! is_string( $specialized ) ) ) {
+			throw new InvalidArgumentException( 'Accepted property contract type must contain string primitive and optional specialized values.' );
+		}
+
+		$canonical = PropertyContractMatrix::contract_for_type( $primitive, $specialized );
+		if ( self::canonicalize_object( $record ) !== self::canonicalize_object( $canonical->to_array() ) ) {
+			throw new InvalidArgumentException( 'Accepted property contract must match its canonical Property Contract Matrix record.' );
+		}
+
+		return $canonical;
+	}
+
+	/**
+	 * Require an exact JSON-object field set while ignoring key order.
+	 *
+	 * @param array<string, mixed> $record Record to inspect.
+	 * @param array<int, string>   $expected_keys Exact allowed keys.
+	 */
+	private static function assert_exact_keys( array $record, array $expected_keys, string $context ): void {
+		$actual_keys = array_keys( $record );
+		sort( $actual_keys );
+		sort( $expected_keys );
+		if ( $actual_keys !== $expected_keys ) {
+			throw new InvalidArgumentException(
+				sprintf( '%s must contain exactly the keys: %s.', $context, implode( ', ', $expected_keys ) )
+			);
+		}
+	}
+
+	/**
+	 * Sort associative object keys recursively while preserving list order.
+	 *
+	 * @return mixed
+	 */
+	private static function canonicalize_object( mixed $value ): mixed {
+		if ( ! is_array( $value ) ) {
+			return $value;
+		}
+
+		if ( array_is_list( $value ) ) {
+			return array_map( static fn ( mixed $item ): mixed => self::canonicalize_object( $item ), $value );
+		}
+
+		$keys = array_keys( $value );
+		sort( $keys );
+
+		$result = array();
+		foreach ( $keys as $key ) {
+			$result[ $key ] = self::canonicalize_object( $value[ $key ] );
+		}
+
+		return $result;
 	}
 
 	/**
