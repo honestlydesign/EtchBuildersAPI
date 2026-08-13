@@ -63,6 +63,7 @@ final class ClassStyleReference {
 	 *
 	 * @param string $style_id Opaque Etch style ID.
 	 * @throws Exceptions\ClassStyleDiagnosticException When the ID or class-style identity is invalid.
+	 * @authoring-contract-version 1.0
 	 */
 	public static function registered( string $style_id ): self {
 		if ( '' === $style_id || trim( $style_id ) !== $style_id ) {

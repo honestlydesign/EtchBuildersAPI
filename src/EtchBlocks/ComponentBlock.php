@@ -100,6 +100,8 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 
 	/**
 	 * Create the Golden Path block for one exact catalog component key.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public static function for_key( string $component_key ): self {
 		$block = self::new()->ref_by_key( $component_key );
@@ -160,6 +162,8 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 
 	/**
 	 * Set one exact schema-backed component instance value path.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function prop_value( string $path, ComponentInstanceValue $value ): self {
 		if ( null === $this->component_key ) {
@@ -182,6 +186,8 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	 *
 	 * The declared result kind must exactly match the Component Contract. Source
 	 * availability and its runtime value remain owned by Etch.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function expression_prop( string $path, ComponentExpression $expression ): self {
 		if ( null === $this->component_key ) {
@@ -296,6 +302,7 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	 *
 	 * @param string        $key Exact schema path on keyed components; raw top-level key otherwise.
 	 * @param ClassStyleSet $classes Validated ordered class-style value.
+	 * @authoring-contract-version 1.0
 	 */
 	public function class_prop( string $key, ClassStyleSet $classes ): self {
 		if ( null !== $this->component_key ) {
@@ -424,6 +431,8 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 
 	/**
 	 * Assign one exact schema-backed filled component slot.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function slot( string $name, Block $first_child, Block ...$additional_children ): self {
 		$this->schema_backed_slots()->set( $name, $first_child, ...$additional_children );

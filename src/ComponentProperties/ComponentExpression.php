@@ -31,6 +31,8 @@ final class ComponentExpression {
 
 	/**
 	 * Create one exact standalone source lookup.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public static function source( string $source_path, PropertyInstanceValueKind $expected_kind ): self {
 		if ( PropertyInstanceValueKind::TRANSPARENT_CHILDREN === $expected_kind ) {

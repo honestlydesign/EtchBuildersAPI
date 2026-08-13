@@ -62,6 +62,7 @@ final class ClassStyleSet {
 	 *
 	 * @param ClassStyleReference    $first First required reference.
 	 * @param ClassStyleReference ...$rest Remaining ordered references.
+	 * @authoring-contract-version 1.0
 	 */
 	public static function of( ClassStyleReference $first, ClassStyleReference ...$rest ): self {
 		$references = array( $first );
@@ -74,6 +75,8 @@ final class ClassStyleSet {
 
 	/**
 	 * Create an explicit empty class-property override.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public static function none(): self {
 		return new self( array() );

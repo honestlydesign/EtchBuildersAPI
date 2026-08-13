@@ -27,10 +27,16 @@ final class ComponentInstanceValue implements ComponentPropValueInterface {
 	) {
 	}
 
+	/**
+	 * @authoring-contract-version 1.0
+	 */
 	public static function string( string $value ): self {
 		return self::literal_string( PropertyInstanceValueKind::STRING, $value );
 	}
 
+	/**
+	 * @authoring-contract-version 1.0
+	 */
 	public static function numeric_string( string $value ): self {
 		if ( '' === $value || trim( $value ) !== $value || ! is_numeric( $value ) || ! is_finite( (float) $value ) ) {
 			throw new InvalidArgumentException( 'Component numeric-string value must be a valid finite numeric string.' );
@@ -39,12 +45,16 @@ final class ComponentInstanceValue implements ComponentPropValueInterface {
 		return new self( PropertyInstanceValueKind::NUMERIC_STRING, $value );
 	}
 
+	/**
+	 * @authoring-contract-version 1.0
+	 */
 	public static function boolean( bool $value ): self {
 		return new self( PropertyInstanceValueKind::BOOLEAN, $value );
 	}
 
 	/**
 	 * @param array<int|string, mixed>|stdClass $value Object payload.
+	 * @authoring-contract-version 1.0
 	 */
 	public static function object( array|stdClass $value ): self {
 		$snapshot = self::snapshot_json_value( $value, 'object' );
@@ -58,6 +68,7 @@ final class ComponentInstanceValue implements ComponentPropValueInterface {
 
 	/**
 	 * @param array<int, mixed> $value Array payload.
+	 * @authoring-contract-version 1.0
 	 */
 	public static function array( array $value ): self {
 		if ( ! array_is_list( $value ) ) {
@@ -73,30 +84,51 @@ final class ComponentInstanceValue implements ComponentPropValueInterface {
 		return new self( PropertyInstanceValueKind::ARRAY, $snapshot );
 	}
 
+	/**
+	 * @authoring-contract-version 1.0
+	 */
 	public static function color( string $value ): self {
 		return self::literal_string( PropertyInstanceValueKind::COLOR_STRING, $value );
 	}
 
+	/**
+	 * @authoring-contract-version 1.0
+	 */
 	public static function loop_reference( string $value ): self {
 		return self::literal_string( PropertyInstanceValueKind::LOOP_REFERENCE_STRING, $value );
 	}
 
+	/**
+	 * @authoring-contract-version 1.0
+	 */
 	public static function url( string $value ): self {
 		return self::literal_string( PropertyInstanceValueKind::URL_STRING, $value );
 	}
 
+	/**
+	 * @authoring-contract-version 1.0
+	 */
 	public static function image( string $value ): self {
 		return self::literal_string( PropertyInstanceValueKind::IMAGE_STRING, $value );
 	}
 
+	/**
+	 * @authoring-contract-version 1.0
+	 */
 	public static function select_option( string $value ): self {
 		return self::literal_string( PropertyInstanceValueKind::SELECT_OPTION_STRING, $value );
 	}
 
+	/**
+	 * @authoring-contract-version 1.0
+	 */
 	public static function wordpress_media_id( string $value ): self {
 		return self::literal_string( PropertyInstanceValueKind::WORDPRESS_MEDIA_ID_STRING, $value );
 	}
 
+	/**
+	 * @authoring-contract-version 1.0
+	 */
 	public static function empty_repeater(): self {
 		return new self( PropertyInstanceValueKind::REPEATER, array() );
 	}
