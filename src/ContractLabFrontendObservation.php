@@ -18,7 +18,7 @@ use InvalidArgumentException;
  */
 final class ContractLabFrontendObservation {
 
-	public const OBSERVATION_VERSION = '1';
+	public const OBSERVATION_VERSION = '2';
 
 	/**
 	 * @param array<int, array<string, mixed>> $dom

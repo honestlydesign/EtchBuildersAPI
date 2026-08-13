@@ -30,27 +30,34 @@ final class ContractLabBrowserSentinelRunner {
 	}
 
 	public static function run( ContractLabBrowserSentinel $sentinel, ContractLabBrowserSentinelClientInterface $client ): ContractLabBrowserSentinelResult {
+		$issuer = new self();
 		$before = null;
 		try {
 			$before = self::observation( $client->capture( $sentinel ), 'capture' );
 			$client->save( $sentinel );
 			$after = self::observation( $client->reload( $sentinel ), 'reload' );
 
-			return $before->to_array() === $after->to_array()
+			$result = $before->to_array() === $after->to_array()
 				? ContractLabBrowserSentinelResult::matched( $sentinel, $before, $after )
 				: ContractLabBrowserSentinelResult::drift( $sentinel, $before, $after );
+
+			return $result->with_execution_provenance( ContractLabExecutionProvenance::from_browser_runner( $issuer, $sentinel, $result->to_array() ) );
 		} catch ( ContractLabObservationException $error ) {
-			return match ( $error->reason() ) {
+			$result = match ( $error->reason() ) {
 				'unsupported' => ContractLabBrowserSentinelResult::skipped( $sentinel, $before, $error->getMessage() ),
 				'unavailable' => ContractLabBrowserSentinelResult::inconclusive( $sentinel, $before, $error->getMessage() ),
 				default      => ContractLabBrowserSentinelResult::failed( $sentinel, $before, null, $error->getMessage() ),
 			};
+
+			return $result->with_execution_provenance( ContractLabExecutionProvenance::from_browser_runner( $issuer, $sentinel, $result->to_array() ) );
 		} catch ( \Throwable $error ) {
-			return ContractLabBrowserSentinelResult::inconclusive(
+			$result = ContractLabBrowserSentinelResult::inconclusive(
 				$sentinel,
 				$before,
 				$error->getMessage() ?: 'Browser infrastructure failed before preservation could be observed.'
 			);
+
+			return $result->with_execution_provenance( ContractLabExecutionProvenance::from_browser_runner( $issuer, $sentinel, $result->to_array() ) );
 		}
 	}
 

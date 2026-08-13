@@ -70,6 +70,22 @@ final class ContractLabCompatibilityRunContext {
 		return $this->record_id;
 	}
 
+	public function builder_contract_version(): string {
+		return $this->builder_contract_version;
+	}
+
+	public function builder_source_revision(): string {
+		return $this->builder_source_revision;
+	}
+
+	public function etch_release(): string {
+		return $this->etch_release;
+	}
+
+	public function artifact_fingerprint(): string {
+		return $this->artifact_fingerprint;
+	}
+
 	/**
 	 * Create the reviewed ledger record for this run.
 	 */

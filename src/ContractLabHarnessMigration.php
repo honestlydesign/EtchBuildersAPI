@@ -306,6 +306,18 @@ final class ContractLabHarnessMigration {
 	}
 
 	/**
+	 * @return array<int, ContractLabHarnessOutcome>
+	 */
+	public function outcomes(): array {
+		$outcomes = array();
+		foreach ( $this->to_array()['outcomes'] as $outcome ) {
+			$outcomes[] = ContractLabHarnessOutcome::from_array( $outcome );
+		}
+
+		return $outcomes;
+	}
+
+	/**
 	 * @return array{migration_version: string, source_repository: string, source_revision: string, source_test_count: int, inventoried_test_count: int, retained_contract_count: int, retired_count: int, outcome_count: int, status: string}
 	 */
 	public function parity(): array {

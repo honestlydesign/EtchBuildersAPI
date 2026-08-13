@@ -19,6 +19,32 @@ use InvalidArgumentException;
 final class ContractLabFrontendFixtureCatalog {
 
 	/**
+	 * Return the marker-verified current-Etch fixture inventory.
+	 *
+	 * The path and marker values are intentionally kept here, beside the
+	 * fixture value object, so a maintainer gate cannot silently drift from the
+	 * Contract Lab site contract.
+	 */
+	public static function current(): self {
+		return self::new(
+			array(
+				ContractLabFrontendFixture::new(
+					'marketing-home',
+					'/contract-fixtures/marketing-home/',
+					array(
+						'dom'        => 'marketing-home',
+						'stylesheet' => '.marketing-card',
+						'class'      => 'marketing-card',
+						'slot'       => 'headline',
+						'loop'        => 'item-1',
+						'dynamic'    => 'title',
+					)
+				),
+			)
+		);
+	}
+
+	/**
 	 * @param array<int, ContractLabFrontendFixture> $fixtures
 	 */
 	private function __construct( private readonly array $fixtures ) {

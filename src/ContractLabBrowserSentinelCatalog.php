@@ -19,6 +19,20 @@ use InvalidArgumentException;
 final class ContractLabBrowserSentinelCatalog {
 
 	/**
+	 * Return the four current-Etch editor save sentinels.
+	 */
+	public static function current(): self {
+		return self::new(
+			array(
+				ContractLabBrowserSentinel::new( 'document-preservation', 'document', 'marketing-home', '/editor/documents', 'save-document' ),
+				ContractLabBrowserSentinel::new( 'component-preservation', 'component', 'marketing-home', '/editor/components', 'save-component' ),
+				ContractLabBrowserSentinel::new( 'pattern-preservation', 'pattern', 'marketing-home', '/editor/patterns', 'save-pattern' ),
+				ContractLabBrowserSentinel::new( 'global-asset-preservation', 'global-asset', 'marketing-home', '/editor/assets', 'save-global-asset' ),
+			)
+		);
+	}
+
+	/**
 	 * @param array<int, ContractLabBrowserSentinel> $sentinels
 	 */
 	private function __construct( private readonly array $sentinels ) {
@@ -84,6 +98,16 @@ final class ContractLabBrowserSentinelCatalog {
 	 */
 	public function all(): array {
 		return $this->sentinels;
+	}
+
+	public function sentinel( string $logical_id ): ContractLabBrowserSentinel {
+		foreach ( $this->sentinels as $sentinel ) {
+			if ( $sentinel->logical_id() === $logical_id ) {
+				return $sentinel;
+			}
+		}
+
+		throw new InvalidArgumentException( sprintf( 'Contract Lab browser sentinel catalog has no sentinel "%s".', $logical_id ) );
 	}
 
 	/**
