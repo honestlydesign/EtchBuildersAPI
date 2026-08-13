@@ -95,15 +95,89 @@ final class ContractLabFrontendCssNormalizer {
 				}
 				$rules[] = $record;
 			} else {
-				$rules[] = array(
-					'selector'     => self::normalize_selector( $prelude ),
-					'declarations' => self::parse_declarations( $body ),
-				);
+				$parsed_body = self::parse_selector_body( $body );
+				$record      = array( 'selector' => self::normalize_selector( $prelude ) );
+				if ( array() !== $parsed_body['declarations'] ) {
+					$record['declarations'] = $parsed_body['declarations'];
+				}
+				if ( array() !== $parsed_body['rules'] ) {
+					$record['rules'] = $parsed_body['rules'];
+					$record['order'] = $parsed_body['order'];
+				}
+				$rules[] = $record;
 			}
 			$cursor = $close + 1;
 		}
 
 		return $rules;
+	}
+
+	/**
+	 * Parse declarations and CSS-nested rules within one selector body.
+	 *
+	 * Current Etch emits native CSS nesting in its reset layer. The Contract
+	 * Lab keeps that structure instead of treating nested selectors as invalid
+	 * declarations or flattening them into an invented browser result.
+	 *
+	 * @return array{declarations: array<int, array{property: string, value: string}>, rules: array<int, array<string, mixed>>, order: array<int, array{kind: string, index: int}>}
+	 */
+	private static function parse_selector_body( string $source ): array {
+		$declaration_parts = array();
+		$nested_rules      = array();
+		$order             = array();
+		$length             = strlen( $source );
+		$cursor             = 0;
+		while ( $cursor < $length ) {
+			$cursor = self::skip_space_and_semicolons( $source, $cursor );
+			if ( $cursor >= $length ) {
+				break;
+			}
+			$found = self::find_top_level_delimiter( $source, $cursor );
+			if ( null === $found ) {
+				$tail = trim( substr( $source, $cursor ) );
+				if ( '' !== $tail ) {
+					$declaration_parts[] = $tail;
+					$order[]             = array( 'kind' => 'declaration', 'index' => count( $declaration_parts ) - 1 );
+				}
+				break;
+			}
+			if ( ';' === $found['delimiter'] ) {
+				$part = trim( substr( $source, $cursor, $found['position'] - $cursor ) );
+				if ( '' !== $part ) {
+					$declaration_parts[] = $part;
+					$order[]             = array( 'kind' => 'declaration', 'index' => count( $declaration_parts ) - 1 );
+				}
+				$cursor = $found['position'] + 1;
+				continue;
+			}
+
+			$prelude = trim( substr( $source, $cursor, $found['position'] - $cursor ) );
+			if ( '' === $prelude ) {
+				throw new ContractLabObservationException( 'malformed', 'Frontend stylesheet contains an empty nested selector.' );
+			}
+			$close = self::find_matching_brace( $source, $found['position'] );
+			if ( null === $close ) {
+				throw new ContractLabObservationException( 'malformed', 'Frontend stylesheet contains an unclosed nested selector.' );
+			}
+			$nested_source = $prelude . '{' . substr( $source, $found['position'] + 1, $close - $found['position'] - 1 ) . '}';
+			$parsed_nested = self::parse_sequence( $nested_source );
+			foreach ( $parsed_nested as $nested_rule ) {
+				$nested_rules[] = $nested_rule;
+				$order[]        = array( 'kind' => 'rule', 'index' => count( $nested_rules ) - 1 );
+			}
+			$cursor        = $close + 1;
+		}
+
+		$declarations = array();
+		if ( array() !== $declaration_parts ) {
+			$declarations = self::parse_declarations( implode( ';', $declaration_parts ) );
+		}
+
+		return array(
+			'declarations' => $declarations,
+			'rules'        => $nested_rules,
+			'order'        => $order,
+		);
 	}
 
 	/**

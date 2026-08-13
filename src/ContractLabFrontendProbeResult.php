@@ -22,31 +22,40 @@ final class ContractLabFrontendProbeResult {
 		private readonly string $status,
 		private readonly ?ContractLabFrontendObservation $observation,
 		private readonly ?string $reason,
-		private readonly array $failures
+		private readonly array $failures,
+		private readonly ?ContractLabExecutionProvenance $execution_provenance
 	) {
 	}
 
 	public static function observed( ContractLabFrontendObservation $observation ): self {
-		return new self( $observation->fixture_id(), 'observed', $observation, null, array() );
+		return new self( $observation->fixture_id(), 'observed', $observation, null, array(), null );
 	}
 
 	public static function skipped( string $fixture_id, string $reason ): self {
-		return new self( $fixture_id, 'skipped', null, $reason, array( 'unsupported prerequisite' ) );
+		return new self( $fixture_id, 'skipped', null, $reason, array( 'unsupported prerequisite' ), null );
 	}
 
 	public static function inconclusive( string $fixture_id, string $reason ): self {
-		return new self( $fixture_id, 'inconclusive', null, $reason, array( 'transport unavailable' ) );
+		return new self( $fixture_id, 'inconclusive', null, $reason, array( 'transport unavailable' ), null );
 	}
 
 	/**
 	 * @param array<int, string> $failures
 	 */
 	public static function failed( ContractLabFrontendObservation $observation, array $failures, ?string $reason = null ): self {
-		return new self( $observation->fixture_id(), 'failed', $observation, $reason, array_values( $failures ) );
+		return new self( $observation->fixture_id(), 'failed', $observation, $reason, array_values( $failures ), null );
 	}
 
 	public static function failed_without_observation( string $fixture_id, string $reason ): self {
-		return new self( $fixture_id, 'failed', null, $reason, array( 'malformed observation' ) );
+		return new self( $fixture_id, 'failed', null, $reason, array( 'malformed observation' ), null );
+	}
+
+	public function with_execution_provenance( ContractLabExecutionProvenance $provenance ): self {
+		if ( ! $provenance->matches_frontend( $this->fixture_id, $this->to_array() ) ) {
+			throw new ContractLabObservationException( 'malformed', sprintf( 'Frontend execution provenance does not identify fixture "%s" exactly.', $this->fixture_id ) );
+		}
+
+		return new self( $this->fixture_id, $this->status, $this->observation, $this->reason, $this->failures, $provenance );
 	}
 
 	public function fixture_id(): string {
@@ -63,6 +72,10 @@ final class ContractLabFrontendProbeResult {
 
 	public function observation(): ?ContractLabFrontendObservation {
 		return $this->observation;
+	}
+
+	public function execution_provenance(): ?ContractLabExecutionProvenance {
+		return $this->execution_provenance;
 	}
 
 	public function reason(): ?string {

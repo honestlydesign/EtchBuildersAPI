@@ -108,11 +108,22 @@ final class ContractLabEtchRuntimeResolutionObservation {
 			throw new ContractLabObservationException( 'malformed', 'Etch runtime resolution has an unknown version, source, or field set.' );
 		}
 
-		$observation = 'observed' === $record['status']
-			? self::observed( $record['styles'], $record['components'] )
-			: self::inconclusive( is_string( $record['reason'] ?? null ) ? $record['reason'] : '' );
-		if ( $observation->to_array() !== $record ) {
-			throw new ContractLabObservationException( 'malformed', 'Etch runtime resolution is not canonical.' );
+		if ( 'observed' === $record['status'] ) {
+			$styles     = self::strip_item_statuses( $record['styles'], 'style' );
+			$components = self::strip_item_statuses( $record['components'], 'component' );
+			$observation = self::observed( $styles, $components );
+			$canonical   = $observation->to_array();
+			$raw         = $record;
+			$raw['styles']     = $styles;
+			$raw['components'] = $components;
+			if ( $canonical !== $record && $raw !== $record ) {
+				throw new ContractLabObservationException( 'malformed', 'Etch runtime resolution is not canonical.' );
+			}
+		} else {
+			$observation = self::inconclusive( is_string( $record['reason'] ?? null ) ? $record['reason'] : '' );
+			if ( $observation->to_array() !== $record ) {
+				throw new ContractLabObservationException( 'malformed', 'Etch runtime resolution is not canonical.' );
+			}
 		}
 
 		return $observation;
@@ -198,6 +209,32 @@ final class ContractLabEtchRuntimeResolutionObservation {
 			'slots'          => $normalized_slots,
 			'status'         => 'resolved',
 		);
+	}
+
+	/**
+	 * Accept the raw public probe shape (no item status) and the canonical
+	 * rehydration shape (resolved item status), while rejecting any other
+	 * status value or field set.
+	 *
+	 * @param array<int, mixed> $items
+	 * @return array<int, array<string, mixed>>
+	 */
+	private static function strip_item_statuses( array $items, string $kind ): array {
+		$normalized = array();
+		foreach ( $items as $item ) {
+			if ( ! is_array( $item ) ) {
+				throw new ContractLabObservationException( 'malformed', sprintf( 'Etch runtime %s records must be objects.', $kind ) );
+			}
+			if ( array_key_exists( 'status', $item ) ) {
+				if ( 'resolved' !== $item['status'] ) {
+					throw new ContractLabObservationException( 'malformed', sprintf( 'Etch runtime %s status must be resolved.', $kind ) );
+				}
+				unset( $item['status'] );
+			}
+			$normalized[] = $item;
+		}
+
+		return $normalized;
 	}
 
 	/**

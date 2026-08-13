@@ -78,6 +78,25 @@ final class ContractLabPersistenceComponentProbeTest extends TestCase {
 		self::assertArrayNotHasKey( 'url', $handoff->to_array() );
 	}
 
+	public function test_runtime_resolution_rehydrates_the_raw_public_probe_envelope(): void {
+		$raw = array(
+			'observation_version' => '1',
+			'source'             => 'etch_runtime_resolution',
+			'status'             => 'observed',
+			'styles'             => array( array( 'opaque_id' => 'style-opaque-id', 'selector' => '.visual-card' ) ),
+			'components'         => array(),
+		);
+
+		$observation = ContractLabEtchRuntimeResolutionObservation::from_array( $raw );
+
+		self::assertSame( 'resolved', $observation->to_array()['styles'][0]['status'] );
+		self::assertSame( $raw['styles'], array_map( static function ( array $style ): array {
+			unset( $style['status'] );
+
+			return $style;
+		}, $observation->to_array()['styles'] ) );
+	}
+
 	public function test_component_probe_observes_nested_values_exact_slots_and_runtime_resolution_separately(): void {
 		$catalog = ComponentContractCatalog::from_contracts(
 			ComponentContract::from_schema( 'FeatureCard', $this->component_schema(), array( 'default', 'actions' ) )

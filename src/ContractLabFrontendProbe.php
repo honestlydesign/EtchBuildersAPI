@@ -31,6 +31,7 @@ final class ContractLabFrontendProbe {
 	}
 
 	public static function run( ContractLabFrontendFixture $fixture, ContractLabFrontendHttpClientInterface $client ): ContractLabFrontendProbeResult {
+		$issuer = new self();
 		try {
 			$response = $client->get( $fixture->path() );
 			if ( ! $response instanceof ContractLabFrontendHttpResponse ) {
@@ -65,20 +66,60 @@ final class ContractLabFrontendProbe {
 				$capabilities
 			);
 
-			return array() === $failures
+			$result = array() === $failures
 				? ContractLabFrontendProbeResult::observed( $observation )
 				: ContractLabFrontendProbeResult::failed( $observation, $failures, 'One or more capability markers were not observed.' );
+
+			return $result->with_execution_provenance( ContractLabExecutionProvenance::from_frontend_probe( $issuer, $fixture->logical_id(), $result->to_array() ) );
 		} catch ( ContractLabObservationException $error ) {
-			return match ( $error->reason() ) {
+			$result = match ( $error->reason() ) {
 				'unsupported' => ContractLabFrontendProbeResult::skipped( $fixture->logical_id(), $error->getMessage() ),
 				'unavailable' => ContractLabFrontendProbeResult::inconclusive( $fixture->logical_id(), $error->getMessage() ),
 				default      => ContractLabFrontendProbeResult::failed_without_observation( $fixture->logical_id(), $error->getMessage() ),
 			};
+
+			return $result->with_execution_provenance( ContractLabExecutionProvenance::from_frontend_probe( $issuer, $fixture->logical_id(), $result->to_array() ) );
 		} catch ( \Throwable $error ) {
-			return ContractLabFrontendProbeResult::inconclusive(
+			$result = ContractLabFrontendProbeResult::inconclusive(
 				$fixture->logical_id(),
 				$error->getMessage() ?: 'Frontend HTTP transport failed before an observation was produced.'
 			);
+
+			return $result->with_execution_provenance( ContractLabExecutionProvenance::from_frontend_probe( $issuer, $fixture->logical_id(), $result->to_array() ) );
+		}
+	}
+
+	/**
+	 * Re-check an observation against the independent fixture contract.
+	 *
+	 * This is deliberately separate from run(): a caller cannot turn a forged
+	 * capability list into green evidence merely by constructing an observation
+	 * with all statuses set to "observed".
+	 */
+	public static function assert_observation( ContractLabFrontendFixture $fixture, ContractLabFrontendObservation $observation ): void {
+		if ( $fixture->logical_id() !== $observation->fixture_id() || $fixture->path() !== $observation->fixture_path() ) {
+			throw new ContractLabObservationException( 'failed', sprintf( 'Frontend observation does not identify fixture "%s" exactly.', $fixture->logical_id() ) );
+		}
+		if ( $observation->response_status() < 200 || $observation->response_status() > 299 ) {
+			throw new ContractLabObservationException( 'failed', sprintf( 'Frontend fixture "%s" observation is not a successful HTTP response.', $fixture->logical_id() ) );
+		}
+
+		$expected_capabilities = array();
+		foreach ( $fixture->capabilities() as $capability ) {
+			$expected_capabilities[] = array(
+				'capability' => $capability,
+				'marker'     => $fixture->marker( $capability ),
+				'status'     => 'observed',
+			);
+		}
+		if ( $expected_capabilities !== $observation->capabilities() ) {
+			throw new ContractLabObservationException( 'failed', sprintf( 'Frontend fixture "%s" capability evidence is not the canonical ordered marker set.', $fixture->logical_id() ) );
+		}
+
+		foreach ( $fixture->capabilities() as $capability ) {
+			if ( ! self::capability_is_observed( $capability, $fixture->marker( $capability ), $observation->dom(), $observation->stylesheets() ) ) {
+				throw new ContractLabObservationException( 'failed', sprintf( 'Frontend fixture "%s" marker for "%s" was not independently observed.', $fixture->logical_id(), $capability ) );
+			}
 		}
 	}
 

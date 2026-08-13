@@ -166,6 +166,28 @@ final class ContractLabFrontendProbeTest extends TestCase {
 		self::assertStringContainsString( 'same-origin', (string) $result->reason() );
 	}
 
+	public function test_native_css_nesting_keeps_selector_rules_inside_the_parent_rule(): void {
+		$rules = ContractLabFrontendCssNormalizer::normalize( '@layer reset { body { display: flex; main { flex-grow: 1; } } }' );
+
+		self::assertSame( 'body', $rules[0]['rules'][0]['selector'] );
+		self::assertSame( 'display', $rules[0]['rules'][0]['declarations'][0]['property'] );
+		self::assertSame( 'main', $rules[0]['rules'][0]['rules'][0]['selector'] );
+		self::assertSame( 'flex-grow', $rules[0]['rules'][0]['rules'][0]['declarations'][0]['property'] );
+	}
+
+	public function test_native_css_nesting_preserves_declaration_and_nested_rule_order(): void {
+		$rules = ContractLabFrontendCssNormalizer::normalize( '.parent { color: red; .child { display: block; } background: blue; }' );
+
+		self::assertSame(
+			array(
+				array( 'kind' => 'declaration', 'index' => 0 ),
+				array( 'kind' => 'rule', 'index' => 0 ),
+				array( 'kind' => 'declaration', 'index' => 1 ),
+			),
+			$rules[0]['order']
+		);
+	}
+
 	public function test_malformed_css_fails_closed_without_emitting_raw_html(): void {
 		$fixture = ContractLabFrontendFixture::new( 'malformed-css', '/contract-fixtures/malformed-css', array( 'stylesheet' => '.broken' ) );
 		$client  = new class implements ContractLabFrontendHttpClientInterface {
