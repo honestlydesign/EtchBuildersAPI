@@ -174,6 +174,41 @@ final class CoreComponentCompositionAuthoringContractTest extends TestCase {
 		);
 	}
 
+	/**
+	 * The complete authoring lane — style registration, class-style references,
+	 * site composition, and full compilation — must run in a plain Composer
+	 * process with no WordPress shims. This is the regression class that broke
+	 * the v2.0.0 tag for Composer-only consumers.
+	 */
+	public function test_authoring_lane_registers_styles_and_compiles_sites_in_a_composer_only_process(): void {
+		$autoload = dirname( __DIR__, 2 ) . '/vendor/autoload.php';
+		$code     = sprintf(
+			'require %s; $id = Style::new()->id("hero-class")->selector(".hero")->type("class")->css("color:red;")->add(); $set = ClassStyleSet::of(ClassStyleReference::registered($id)); $pattern = Pattern::new("P", "D")->key("P")->blocks(TextBlock::new()->content("x")); $def = SiteDefinition::new()->pattern($pattern)->page(Page::new()->slug("home")->pattern_use(PatternUse::registered($pattern)))->post(Post::new()->post_type("post")->slug("hello")->title("Hello")->block(TextBlock::new()->content("y"))); $plan = $def->compile(\HonestlyDesign\EtchBuilders\Support\InMemorySiteRuntimeCapabilities::known("post")); $errors = array_filter($plan->diagnostics(), static fn ($d) => "error" === $d->severity()->value); echo json_encode(array("style_id" => $id, "set_count" => count($set->ids()), "identities" => $plan->resolved_identities(), "errors" => count($errors)), JSON_THROW_ON_ERROR);',
+			var_export( $autoload, true )
+		);
+		$code     = 'use HonestlyDesign\\EtchBuilders\\{Style, ClassStyleReference, ClassStyleSet, SiteDefinition, Page, Post, Pattern, PatternUse}; use HonestlyDesign\\EtchBuilders\\EtchBlocks\\TextBlock; ' . $code;
+		$process  = proc_open(
+			array( PHP_BINARY, '-r', $code ),
+			array( 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ),
+			$pipes
+		);
+		self::assertIsResource( $process );
+		$output = stream_get_contents( $pipes[1] );
+		$error  = stream_get_contents( $pipes[2] );
+		$output = false === $output ? '' : $output;
+		$error  = false === $error ? '' : $error;
+		fclose( $pipes[1] );
+		fclose( $pipes[2] );
+		$exit_code = proc_close( $process );
+
+		self::assertSame( 0, $exit_code, $error );
+		$result = json_decode( $output, true, 512, JSON_THROW_ON_ERROR );
+		self::assertSame( 'hero-class', $result['style_id'] );
+		self::assertSame( 1, $result['set_count'] );
+		self::assertSame( array( 'pattern:P', 'page:slug:home', 'post:post:hello' ), $result['identities'] );
+		self::assertSame( 0, $result['errors'] );
+	}
+
 	/** @return list<string> */
 	private function method_names( AuthoringContractCatalog $catalog, string $capability_id ): array {
 		return array_map(
