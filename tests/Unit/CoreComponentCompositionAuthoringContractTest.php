@@ -129,6 +129,47 @@ final class CoreComponentCompositionAuthoringContractTest extends TestCase {
 		self::assertSame( '1.0', $output );
 	}
 
+	public function test_versioned_recipe_catalogs_execute_in_a_composer_only_process_without_wordpress_shims(): void {
+		$autoload = dirname( __DIR__, 2 ) . '/vendor/autoload.php';
+		$code = sprintf(
+			'require %s; $catalogs = array( HonestlyDesign\\EtchBuilders\\CoreAuthoringRecipeCatalog::new(), HonestlyDesign\\EtchBuilders\\CoreNegativeAuthoringRecipeCatalog::new(), HonestlyDesign\\EtchBuilders\\CoreCompositeAuthoringRecipeCatalog::new() ); $results = array(); foreach ( $catalogs as $catalog ) { foreach ( $catalog->execute_all() as $result ) { $result_data = $result->to_array(); $results[ $result_data["recipe_id"] ] = $result->assertions_passed(); } } HonestlyDesign\\EtchBuilders\\Page::new()->slug("page-slug"); HonestlyDesign\\EtchBuilders\\Post::new()->slug("post-slug"); HonestlyDesign\\EtchBuilders\\Template::new()->slug("template-slug"); $results["normalized-slugs"] = true; foreach ( array( "Needs WordPress", " page-slug " ) as $invalid_slug ) { try { HonestlyDesign\\EtchBuilders\\Page::new()->slug( $invalid_slug ); $results["non-normalized-slugs-rejected"] = false; break; } catch ( InvalidArgumentException $exception ) { $results["non-normalized-slugs-rejected"] = true; } } echo json_encode( $results, JSON_THROW_ON_ERROR );',
+			var_export( $autoload, true )
+		);
+		$process = proc_open(
+			array( PHP_BINARY, '-r', $code ),
+			array( 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ),
+			$pipes
+		);
+		self::assertIsResource( $process );
+		$output = stream_get_contents( $pipes[1] );
+		$error  = stream_get_contents( $pipes[2] );
+		$output = false === $output ? '' : $output;
+		$error  = false === $error ? '' : $error;
+		fclose( $pipes[1] );
+		fclose( $pipes[2] );
+		$exit_code = proc_close( $process );
+
+		self::assertSame( 0, $exit_code, $error );
+		self::assertSame(
+			array(
+				'recipe.site.component'              => true,
+				'recipe.site.page'                   => true,
+				'recipe.negative.component-path'     => true,
+				'recipe.negative.class-style-id'     => true,
+				'recipe.negative.loop-expression'    => true,
+				'recipe.negative.raw-fallback'       => true,
+				'recipe.negative.style-ownership'    => true,
+				'recipe.reference.marketing'         => true,
+				'recipe.reference.cms-blog'          => true,
+				'recipe.reference.ome'               => true,
+				'recipe.reference.woo'               => true,
+				'normalized-slugs'                   => true,
+				'non-normalized-slugs-rejected'      => true,
+			),
+			json_decode( $output, true, 512, JSON_THROW_ON_ERROR )
+		);
+	}
+
 	/** @return list<string> */
 	private function method_names( AuthoringContractCatalog $catalog, string $capability_id ): array {
 		return array_map(

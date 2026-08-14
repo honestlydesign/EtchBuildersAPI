@@ -12,6 +12,7 @@ namespace HonestlyDesign\EtchBuilders;
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\Content\AbstractContentBuilder;
 use HonestlyDesign\EtchBuilders\Content\ContentPostRegistrar;
+use HonestlyDesign\EtchBuilders\Support\SlugIdentityNormalizer;
 use HonestlyDesignEtchBuildersEnvironment;
 use RuntimeException;
 use WP_Error;
@@ -104,7 +105,7 @@ final class Post extends AbstractContentBuilder {
 	 * @throws InvalidArgumentException When slug is empty after sanitization.
 	 */
 	public function slug( string $slug ): self {
-		$slug = sanitize_title( $slug );
+		$slug = SlugIdentityNormalizer::normalize( $slug, 'Post builder' );
 
 		if ( '' === $slug ) {
 			throw new InvalidArgumentException( 'Post builder slug must be non-empty.' );
