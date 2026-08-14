@@ -71,14 +71,10 @@ final class SiteCompilerTest extends TestCase {
 	}
 
 	private function post( string $post_type, string $slug ): Post {
-		$post = Post::new();
-		$type = new \ReflectionProperty( Post::class, 'post_type' );
-		$type->setValue( $post, $post_type );
-		$slug_property = new \ReflectionProperty( Post::class, 'slug' );
-		$slug_property->setValue( $post, $slug );
-		$post->blocks_sequence( BlockSequence::new()->append( TextBlock::new()->content( $slug ) ) );
-
-		return $post;
+		return Post::new()
+			->post_type( $post_type )
+			->slug( $slug )
+			->blocks_sequence( BlockSequence::new()->append( TextBlock::new()->content( $slug ) ) );
 	}
 
 	public function test_clean_definition_compiles_all_entity_lanes_and_pattern_dependencies(): void {
