@@ -12,6 +12,7 @@ namespace HonestlyDesign\EtchBuilders;
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\Content\AbstractContentBuilder;
 use HonestlyDesign\EtchBuilders\Content\ContentPostRegistrar;
+use HonestlyDesign\EtchBuilders\Support\Key;
 use HonestlyDesign\EtchBuilders\Support\SlugIdentityNormalizer;
 use HonestlyDesignEtchBuildersEnvironment;
 use RuntimeException;
@@ -73,13 +74,17 @@ final class Post extends AbstractContentBuilder {
 	}
 
 	/**
-	 * Target a registered post type.
+	 * Target a post type.
+	 *
+	 * WordPress-backed authoring rejects an unregistered type immediately. Pure
+	 * Site Definition authoring defers that check to the compiler's explicit
+	 * runtime-capability adapter.
 	 *
 	 * @param string $post_type Post type slug.
-	 * @throws InvalidArgumentException When post type is invalid.
+	 * @throws InvalidArgumentException When post type is invalid or WordPress reports it as unregistered.
 	 */
 	public function post_type( string $post_type ): self {
-		$post_type = sanitize_key( $post_type );
+		$post_type = Key::sanitize( $post_type );
 
 		if ( '' === $post_type ) {
 			throw new InvalidArgumentException( 'Post builder post_type must be non-empty.' );
@@ -89,7 +94,7 @@ final class Post extends AbstractContentBuilder {
 			throw new InvalidArgumentException( 'Post builder cannot target post_type page. Use Page instead.' );
 		}
 
-		if ( ! post_type_exists( $post_type ) ) {
+		if ( function_exists( 'post_type_exists' ) && ! post_type_exists( $post_type ) ) {
 			throw new InvalidArgumentException( 'Post builder post_type must be registered.' );
 		}
 
