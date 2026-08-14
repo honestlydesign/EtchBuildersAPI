@@ -729,6 +729,65 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 		 * @runInSeparateProcess
 		 * @preserveGlobalState disabled
 		 */
+		public function test_matching_builder_handoff_styles_are_adopted_not_conflicted(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array(
+				'etch_styles' => array(
+					'page__main' => array(
+						'selector'   => '.page__main',
+						'collection' => 'default',
+						'css'        => 'min-height: 60vh',
+						'type'       => 'class',
+						'overwrite_on_register' => true,
+					),
+					'foreign' => array(
+						'selector' => '.foreign',
+						'css'      => 'color: blue;',
+						'type'     => 'class',
+					),
+					'drifted' => array(
+						'selector' => '.drifted',
+						'css'      => 'user changed',
+						'type'     => 'class',
+						'overwrite_on_register' => true,
+					),
+				),
+			);
+			$GLOBALS['etch_builders_site_persistence_posts'] = array();
+			$GLOBALS['etch_builders_site_persistence_meta']  = array();
+
+			$adopted = CompiledSiteResource::new( CompiledSiteResourceType::STYLE, 'style:page__main', array( 'selector' => '.page__main', 'css' => 'min-height: 60vh', 'type' => 'class' ) );
+			$foreign = CompiledSiteResource::new( CompiledSiteResourceType::STYLE, 'style:foreign', array( 'selector' => '.foreign', 'css' => 'color: blue;', 'type' => 'class' ) );
+			$drifted = CompiledSiteResource::new( CompiledSiteResourceType::STYLE, 'style:drifted', array( 'selector' => '.drifted', 'css' => 'color: red;', 'type' => 'class' ) );
+
+			$persistence = new WordPressSitePersistence();
+			$report = $persistence->apply( CompiledSitePlan::from_sections(
+				styles: array( $adopted, $foreign, $drifted ),
+				ownership: array(
+					CompiledSiteOwnership::new( 'site:root', 'style:page__main', 'style' ),
+					CompiledSiteOwnership::new( 'site:root', 'style:foreign', 'style' ),
+					CompiledSiteOwnership::new( 'site:root', 'style:drifted', 'style' ),
+				)
+			) );
+
+			$outcomes = array();
+			foreach ( $report->results() as $result ) {
+				$outcomes[ $result->identity() ] = $result->outcome()->value;
+			}
+			self::assertSame( 'created', $outcomes['style:page__main'] );
+			self::assertSame( 'conflict', $outcomes['style:foreign'] );
+			self::assertSame( 'conflict', $outcomes['style:drifted'] );
+			self::assertArrayHasKey( 'style:page__main', $GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_resources'] );
+			self::assertSame( 'unchanged', $this->outcomes( $persistence->apply( CompiledSitePlan::from_sections(
+				styles: array( $adopted ),
+				ownership: array( CompiledSiteOwnership::new( 'site:root', 'style:page__main', 'style' ) )
+			) ) )[0] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
 		public function test_recorded_style_orphans_are_deleted_but_unrecorded_native_styles_survive(): void {
 			$this->install_wordpress_option_stubs();
 			$GLOBALS['etch_builders_site_persistence_options'] = array(
