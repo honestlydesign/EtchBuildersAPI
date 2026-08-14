@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders;
 
+use HonestlyDesign\EtchBuilders\ComponentProperties\ComponentClassPropertyGuard;
 use HonestlyDesign\EtchBuilders\Contracts\SiteRuntimeCapabilitiesInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SiteEntityCompilerMetadataInterface;
 use HonestlyDesign\EtchBuilders\Support\WordPressSiteRuntimeCapabilities;
@@ -433,7 +434,7 @@ final class SiteCompiler {
 			self::validate_serialized_loops( $identity, $blocks, $dependencies, $diagnostics, $loop_keys );
 		}
 
-		if ( function_exists( 'parse_blocks' ) && '' !== trim( $blocks ) ) {
+		if ( null === $sequence && function_exists( 'parse_blocks' ) && '' !== trim( $blocks ) ) {
 			try {
 				$parsed = parse_blocks( $blocks );
 				foreach ( BuilderPreviewStyleGuard::validate_component_class_props( $parsed ) as $message ) {
@@ -484,6 +485,24 @@ final class SiteCompiler {
 				$ref = $attributes['ref'] ?? null;
 				if ( ! is_int( $ref ) || $ref <= 0 ) {
 					$diagnostics[] = self::error( self::COMPONENT_CONTRACT_INVALID, 'Component instance requires a positive numeric ref.', $identity );
+				} else {
+					$guard = new ComponentClassPropertyGuard(
+						Environment::component_contracts()->catalog(),
+						Environment::ref_resolver()
+					);
+					foreach (
+						$guard->validate(
+							array(
+								array(
+									'blockName'   => 'etch/component',
+									'attrs'       => $attributes,
+									'innerBlocks' => array(),
+								),
+							)
+						) as $message
+					) {
+						$diagnostics[] = self::error( self::COMPONENT_CONTRACT_INVALID, $message, $identity );
+					}
 				}
 			}
 
