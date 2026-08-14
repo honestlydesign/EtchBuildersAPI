@@ -11,6 +11,7 @@ namespace HonestlyDesign\EtchBuilders;
 
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceApplyLockInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceNativeRetirementInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceResourceStoreInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceStoreInterface;
 use Throwable;
@@ -336,12 +337,30 @@ class SitePersistence implements SitePersistenceInterface {
 
 	/**
 	 * Verify one exact external runtime prerequisite without writing or claiming it.
+	 *
+	 * A stale Builder-owned ledger from a previous managed era is retired
+	 * automatically when the store supports it, so projects migrate from
+	 * managed presets to native ones without manual SQL. Foreign modifications
+	 * keep the conflict fail-closed.
 	 */
 	private function verify_native_record( SitePersistenceRecord $expected ): SitePersistenceResult {
 		try {
 			$observed = $this->store->find( $expected->identity() );
 		} catch ( Throwable $throwable ) {
 			return self::failure( $expected->identity(), $throwable );
+		}
+
+		if ( null === $observed || $observed->is_owned() ) {
+			if ( $this->store instanceof SitePersistenceNativeRetirementInterface ) {
+				$retired = $this->store->retire_owned_native_record( $expected->identity() );
+				if ( $retired->is_success() ) {
+					try {
+						$observed = $this->store->find( $expected->identity() );
+					} catch ( Throwable $throwable ) {
+						return self::failure( $expected->identity(), $throwable );
+					}
+				}
+			}
 		}
 
 		if ( null === $observed ) {

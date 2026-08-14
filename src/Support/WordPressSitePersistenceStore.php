@@ -16,6 +16,7 @@ use HonestlyDesign\EtchBuilders\CompiledSitePlan;
 use HonestlyDesign\EtchBuilders\CompiledSiteResource;
 use HonestlyDesign\EtchBuilders\CompiledSiteResourceType;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceApplyLockInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceNativeRetirementInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceResourceStoreInterface;
 use HonestlyDesign\EtchBuilders\RegistrationResult;
 use HonestlyDesign\EtchBuilders\SiteHomePolicy;
@@ -30,7 +31,7 @@ use Throwable;
  * adapter keeps builder ownership and snapshots beside native WordPress data
  * so native records remain inspectable by Etch and other WordPress tooling.
  */
-final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInterface, SitePersistenceResourceStoreInterface {
+final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInterface, SitePersistenceNativeRetirementInterface, SitePersistenceResourceStoreInterface {
 
 	private const OPTION_PREFIX = 'etch_builders_site_record_';
 
@@ -1648,6 +1649,82 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		}
 
 		return null === \get_option( self::APPLY_LOCK_OPTION, null );
+	}
+
+	/**
+	 * Retire stale Builder ownership of a native loop preset identity.
+	 *
+	 * A previous managed era may have left an owned entity ledger beside (or
+	 * on top of) the native Etch record, which fails native verification with
+	 * an ownership conflict. Retirement removes the stale ledger and any loop
+	 * entry that still carries a self-verifying Builder stamp; a native entry
+	 * without the stamp is kept untouched. Anything modified since the Builder
+	 * wrote it fails closed and keeps the conflict for manual review.
+	 */
+	public function retire_owned_native_record( string $identity ): RegistrationResult {
+		if ( ! str_starts_with( $identity, 'loop_preset:' ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_NATIVE_RETIREMENT_UNSUPPORTED', 'Native ownership retirement currently supports loop preset identities only.' );
+		}
+		if ( ! \function_exists( 'get_option' ) || ! \function_exists( 'update_option' ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_RUNTIME_UNAVAILABLE', 'The native Etch loop option capability is unavailable.' );
+		}
+
+		$stored = $this->stored_entity( $identity );
+		if ( null === $stored || ! $stored->is_owned() ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_NATIVE_RETIREMENT_MISSING', 'No stale Builder ownership exists for this native identity.' );
+		}
+
+		$key  = substr( $identity, strlen( 'loop_preset:' ) );
+		$loops = \get_option( self::LOOPS_OPTION, array() );
+		$next  = is_array( $loops ) ? $loops : array();
+
+		foreach ( $next as $option_key => $loop ) {
+			if ( ! is_array( $loop ) || $key !== (string) ( $loop['key'] ?? '' ) ) {
+				continue;
+			}
+
+			$stamp = $loop['_omide_builder_hash'] ?? null;
+			if ( ! is_string( $stamp ) || '' === $stamp ) {
+				continue;
+			}
+
+			$verified = $loop;
+			unset( $verified['_omide_builder_hash'], $verified['id'] );
+			$verified = $this->without_runtime_private_keys( $verified );
+			if ( $this->payload_hash( $verified ) !== $stamp ) {
+				return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_NATIVE_RETIREMENT_DRIFT', 'The Builder-written loop entry changed after it was persisted; retirement requires manual review.' );
+			}
+
+			$ledger_payload = $stored->payload();
+			unset( $ledger_payload['id'] );
+			if ( $this->payload_hash( $this->without_runtime_private_keys( $ledger_payload ) ) !== $stamp ) {
+				return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_NATIVE_RETIREMENT_DRIFT', 'The stale Builder ledger no longer matches the persisted loop entry; retirement requires manual review.' );
+			}
+
+			unset( $next[ (string) $option_key ] );
+		}
+
+		$ledger = \get_option( self::ENTITY_RECORDS_OPTION, array() );
+		$ledger = is_array( $ledger ) ? $ledger : array();
+		unset( $ledger[ $identity ] );
+
+		$failed = $this->update_options_atomically( array(
+			array(
+				'option' => self::LOOPS_OPTION,
+				'before' => $loops,
+				'after'  => $next,
+			),
+			array(
+				'option' => self::ENTITY_RECORDS_OPTION,
+				'before' => \get_option( self::ENTITY_RECORDS_OPTION, array() ),
+				'after'  => $ledger,
+			),
+		) );
+		if ( null !== $failed ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', sprintf( 'WordPress could not update "%s" while retiring stale native ownership; prior writes were rolled back.', $failed ) );
+		}
+
+		return RegistrationResult::success();
 	}
 
 	private function claim_option_name( string $identity ): string {
