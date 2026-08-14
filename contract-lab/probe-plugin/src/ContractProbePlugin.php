@@ -213,7 +213,7 @@ final class ContractProbePlugin {
 			unset( $component );
 		}
 
-		$runtime = self::runtime_style_observation( $styles );
+		$runtime = self::runtime_style_observation( $styles, count( $component_keys ) );
 
 		return array(
 			'persistence_handoff' => array(
@@ -433,7 +433,18 @@ final class ContractProbePlugin {
 	 * @param array<int, array{opaque_id: string, type: string, selector: string}> $styles
 	 * @return array<string, mixed>
 	 */
-	private static function runtime_style_observation( array $styles ): array {
+	private static function runtime_style_observation( array $styles, int $requested_component_count ): array {
+		if ( $requested_component_count > 0 ) {
+			return array(
+				'observation_version' => '1',
+				'source'             => 'etch_runtime_resolution',
+				'status'             => 'inconclusive',
+				'styles'             => array(),
+				'components'         => array(),
+				'reason'             => 'Etch public component resolution surface is unavailable; component runtime evidence cannot be claimed.',
+			);
+		}
+
 		$style_class = implode( '\\', array( 'Etch', 'Blocks', 'Global', 'StylesRegister' ) );
 		if ( ! class_exists( $style_class ) || ! method_exists( $style_class, 'get_style_by_id' ) ) {
 			return array(

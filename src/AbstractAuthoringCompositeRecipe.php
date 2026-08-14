@@ -35,7 +35,10 @@ abstract class AbstractAuthoringCompositeRecipe implements AuthoringCompositeRec
 				$this->id(),
 				$this->version(),
 				$expected_outcome,
-				$expected_outcome->skip_reason() ?? 'Optional product prerequisites are unavailable.'
+				sprintf(
+					'Optional product prerequisites are unavailable: %s.',
+					implode( ', ', $this->optional_product_prerequisite_ids() )
+				)
 			);
 		}
 

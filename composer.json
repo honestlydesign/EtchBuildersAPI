@@ -3,7 +3,13 @@
     "description": "Builder API for serializing Etch blocks, styles, and dynamic data.",
     "type": "library",
     "license": "MIT",
-    "keywords": ["etch", "wordpress", "builder", "blocks", "gutenberg"],
+    "keywords": [
+        "etch",
+        "wordpress",
+        "builder",
+        "blocks",
+        "gutenberg"
+    ],
     "authors": [
         {
             "name": "honestlydesign",
@@ -31,6 +37,7 @@
     },
     "scripts": {
         "test": "phpunit",
+        "test:composer-only": "phpunit --filter composer_only_process",
         "phpstan": "phpstan analyse --memory-limit=1G"
     },
     "config": {

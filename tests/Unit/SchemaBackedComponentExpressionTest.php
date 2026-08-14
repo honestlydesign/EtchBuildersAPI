@@ -170,7 +170,9 @@ final class SchemaBackedComponentExpressionTest extends TestCase {
 			'boolean literal'     => array( 'true' ),
 			'false literal'       => array( 'false' ),
 			'null literal'        => array( 'null' ),
+			'nan literal'         => array( 'NaN' ),
 			'browser infinity'    => array( 'Infinity' ),
+			'undefined literal'   => array( 'undefined' ),
 			'json literal'        => array( '{"title":"x"}' ),
 			'quoted segment'      => array( "this.'title'" ),
 			'escape'              => array( 'this\\title' ),
@@ -305,12 +307,18 @@ final class SchemaBackedComponentExpressionTest extends TestCase {
 		$attributes = $this->extract_attributes(
 			ComponentBlock::new()
 				->ref( 77 )
-				->prop_expression( 'invented', 'dangerous()' )
+				->prop_raw( 'invented', '{dangerous()}' )
 				->to_block()
 				->to_string()
 		);
 
 		self::assertSame( '{dangerous()}', $attributes['invented'] );
+	}
+
+	public function test_unchecked_expression_helper_is_not_available_to_agents(): void {
+		$this->expectException( \ReflectionException::class );
+		$this->expectExceptionMessage( 'prop_expression' );
+		new ReflectionMethod( ComponentBlock::class, 'prop_expression' );
 	}
 
 	public function test_checked_method_signature_keeps_expression_contract_visible_to_agents(): void {

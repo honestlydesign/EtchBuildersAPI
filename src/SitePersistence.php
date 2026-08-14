@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders;
 
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceApplyLockInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceResourceStoreInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceStoreInterface;
@@ -81,18 +82,41 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		$results = array();
+		$mutates = false;
 		foreach ( $records as $entry ) {
-			$record = $entry['record'];
-			$results[] = CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE === $entry['intent']
-				? $this->verify_native_record( $record )
-				: $this->apply_record( $record );
+			if ( CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE !== $entry['intent'] ) {
+				$mutates = true;
+				break;
+			}
 		}
 
-		if ( $this->all_results_succeeded( $results ) && $this->store instanceof SitePersistenceResourceStoreInterface ) {
-			$this->cleanup_orphan_resources( $plan, $results );
+		$lock = $mutates && $this->store instanceof SitePersistenceApplyLockInterface ? $this->store : null;
+		if ( null !== $lock && ! $lock->acquire_site_apply_lock() ) {
+			return SitePersistenceReport::new( array(), array(
+				CompiledSiteDiagnostic::new(
+					'ETCH_SITE_PERSISTENCE_APPLY_LOCKED',
+					CompiledSiteDiagnosticSeverity::ERROR,
+					'Another Site apply still holds the site-wide persistence lock.'
+				),
+			) );
 		}
 
-		return SitePersistenceReport::new( $results );
+		try {
+			foreach ( $records as $entry ) {
+				$record = $entry['record'];
+				$results[] = CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE === $entry['intent']
+					? $this->verify_native_record( $record )
+					: $this->apply_record( $record );
+			}
+
+			if ( $this->all_results_succeeded( $results ) && $this->store instanceof SitePersistenceResourceStoreInterface ) {
+				$this->cleanup_orphan_resources( $plan, $results );
+			}
+
+			return SitePersistenceReport::new( $results );
+		} finally {
+			$lock?->release_site_apply_lock();
+		}
 	}
 
 	/**

@@ -85,7 +85,10 @@ final class ContractLabComponentPropertyProbe {
 			}
 
 			$runtime_component = $runtime_components[ $component_key ] ?? null;
-			if ( null !== $runtime_component && $runtime_component['slots'] !== $observed->slots() ) {
+			if ( null === $runtime_component ) {
+				throw new ContractLabObservationException( 'unavailable', sprintf( 'Etch runtime resolution has no component evidence for "%s"; persistence facts alone cannot prove runtime behavior.', $component_key ) );
+			}
+			if ( $runtime_component['slots'] !== $observed->slots() ) {
 				throw new ContractLabObservationException( 'unsupported', sprintf( 'Etch runtime did not resolve the exact slots for component "%s".', $component_key ) );
 			}
 
@@ -105,12 +108,10 @@ final class ContractLabComponentPropertyProbe {
 					}
 				}
 
-				if ( null !== $runtime_component ) {
-					$runtime_paths = $runtime_component['property_paths'];
-					foreach ( $values as $value ) {
-						if ( ! in_array( $value['path'], $runtime_paths, true ) ) {
-							throw new ContractLabObservationException( 'unsupported', sprintf( 'Etch runtime did not resolve component "%s" property path "%s".', $component_key, $value['path'] ) );
-						}
+				$runtime_paths = $runtime_component['property_paths'];
+				foreach ( $values as $value ) {
+					if ( ! in_array( $value['path'], $runtime_paths, true ) ) {
+						throw new ContractLabObservationException( 'unsupported', sprintf( 'Etch runtime did not resolve component "%s" property path "%s".', $component_key, $value['path'] ) );
 					}
 				}
 

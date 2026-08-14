@@ -49,11 +49,7 @@ final class OmeReferenceSiteAuthoringRecipe extends AbstractAuthoringCompositeRe
 		throw new \LogicException( 'OME composite recipe requires an accepted component contract catalog.' );
 	}
 
-	protected function is_available(): bool {
-		return false;
-	}
-
 	public function expected_outcome(): AuthoringCompositeRecipeExpectation {
-		return AuthoringCompositeRecipeExpectation::skipped( 'Accepted OME component contracts are unavailable; props and slots remain intentionally undiscovered.' );
+		return AuthoringCompositeRecipeExpectation::skipped( 'Optional product prerequisites are unavailable: ome.accepted-component-contracts.' );
 	}
 }

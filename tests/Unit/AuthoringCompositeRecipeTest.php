@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace HonestlyDesign\EtchBuilders\Tests\Unit;
 
 use HonestlyDesign\EtchBuilders\AuthoringCompositeRecipeCatalog;
+use HonestlyDesign\EtchBuilders\CmsBlogReferenceSiteAuthoringRecipe;
 use HonestlyDesign\EtchBuilders\CoreCompositeAuthoringRecipeCatalog;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
@@ -61,9 +62,9 @@ final class AuthoringCompositeRecipeTest extends TestCase {
 
 		foreach (
 			array(
-				'recipe.reference.cms-blog' => array( 'wordpress.post-type.post', 'WordPress post-type runtime is not installed in the pure package execution context.' ),
-				'recipe.reference.ome'      => array( 'ome.accepted-component-contracts', 'Accepted OME component contracts are unavailable; props and slots remain intentionally undiscovered.' ),
-				'recipe.reference.woo'      => array( 'woocommerce.runtime-contract', 'Accepted Woo runtime/component contracts are unavailable; no guessed product props or slots are emitted.' ),
+				'recipe.reference.cms-blog' => array( 'wordpress.post-type.post', 'Optional product prerequisites are unavailable: wordpress.post-type.post.' ),
+				'recipe.reference.ome'      => array( 'ome.accepted-component-contracts', 'Optional product prerequisites are unavailable: ome.accepted-component-contracts.' ),
+				'recipe.reference.woo'      => array( 'woocommerce.runtime-contract', 'Optional product prerequisites are unavailable: woocommerce.runtime-contract.' ),
 			) as $id => $expected
 		) {
 			$recipe = $catalog->recipe( $id );
@@ -76,6 +77,34 @@ final class AuthoringCompositeRecipeTest extends TestCase {
 			self::assertSame( $expected[1], $result->reason() );
 			self::assertFalse( $result->writes_detected() );
 		}
+	}
+
+	public function test_cms_blog_recipe_compiles_its_complete_plan_when_the_runtime_supplies_the_post_type(): void {
+		$recipe = new CmsBlogReferenceSiteAuthoringRecipe(
+			\HonestlyDesign\EtchBuilders\Support\InMemorySiteRuntimeCapabilities::known( 'post' )
+		);
+		$result = $recipe->execute();
+
+		self::assertSame( 'passed', $result->status(), $result->failure_message() );
+		self::assertTrue( $result->assertions_passed(), $result->failure_message() );
+		$plan = $result->plan();
+		self::assertNotNull( $plan );
+		self::assertSame(
+			array( 'component:Hero', 'pattern:BlogIntro', 'page:slug:journal', 'post:post:hello-world', 'template:slug:single' ),
+			$plan->resolved_identities()
+		);
+		self::assertFalse( $result->writes_detected() );
+	}
+
+	public function test_cms_blog_recipe_stays_skipped_when_the_runtime_denies_the_post_type(): void {
+		$recipe = new CmsBlogReferenceSiteAuthoringRecipe(
+			\HonestlyDesign\EtchBuilders\Support\InMemorySiteRuntimeCapabilities::unavailable()
+		);
+		$result = $recipe->execute();
+
+		self::assertSame( 'skipped', $result->status() );
+		self::assertTrue( $result->assertions_passed(), $result->failure_message() );
+		self::assertNull( $result->plan() );
 	}
 
 	public function test_composite_catalog_projection_is_closed_and_rejects_duplicates(): void {

@@ -49,11 +49,7 @@ final class WooReferenceSiteAuthoringRecipe extends AbstractAuthoringCompositeRe
 		throw new \LogicException( 'Woo composite recipe requires an accepted Woo runtime contract.' );
 	}
 
-	protected function is_available(): bool {
-		return false;
-	}
-
 	public function expected_outcome(): AuthoringCompositeRecipeExpectation {
-		return AuthoringCompositeRecipeExpectation::skipped( 'Accepted Woo runtime/component contracts are unavailable; no guessed product props or slots are emitted.' );
+		return AuthoringCompositeRecipeExpectation::skipped( 'Optional product prerequisites are unavailable: woocommerce.runtime-contract.' );
 	}
 }

@@ -611,6 +611,124 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 		 * @runInSeparateProcess
 		 * @preserveGlobalState disabled
 		 */
+		public function test_crashed_native_claim_is_recovered_after_the_ttl_instead_of_conflicting_forever(): void {
+			foreach ( array(
+				'stale stamped claim' => 'honestlydesign/etch-builders:' . ( time() - 901 ),
+				'legacy plain claim'  => 'honestlydesign/etch-builders',
+			) as $existing_claim ) {
+				$this->install_wordpress_option_stubs();
+				$GLOBALS['etch_builders_site_persistence_options'] = array();
+				$GLOBALS['etch_builders_site_persistence_posts']  = array();
+				$GLOBALS['etch_builders_site_persistence_meta']   = array();
+
+				$claim = 'etch_builders_site_claim_' . hash( 'sha256', 'page:slug:journal' );
+				$GLOBALS['etch_builders_site_persistence_options'][ $claim ] = $existing_claim;
+
+				$page = CompiledSiteEntity::new(
+					CompiledSiteEntityType::PAGE,
+					'page:slug:journal',
+					array( 'slug' => 'journal', 'blocks' => '<!-- wp:etch/text {"content":"Journal"} /-->' )
+				);
+				$report = ( new WordPressSitePersistence() )->apply( CompiledSitePlan::from_sections( entities: array( $page ) ) );
+
+				self::assertSame( array( 'created' ), $this->outcomes( $report ), $existing_claim );
+				self::assertArrayNotHasKey( $claim, $GLOBALS['etch_builders_site_persistence_options'], $existing_claim );
+			}
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_fresh_native_claim_from_a_live_apply_still_conflicts(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array();
+			$GLOBALS['etch_builders_site_persistence_posts']  = array();
+			$GLOBALS['etch_builders_site_persistence_meta']   = array();
+
+			$claim = 'etch_builders_site_claim_' . hash( 'sha256', 'page:slug:journal' );
+			$GLOBALS['etch_builders_site_persistence_options'][ $claim ] = 'honestlydesign/etch-builders:' . time();
+
+			$page = CompiledSiteEntity::new(
+				CompiledSiteEntityType::PAGE,
+				'page:slug:journal',
+				array( 'slug' => 'journal', 'blocks' => '<!-- wp:etch/text {"content":"Journal"} /-->' )
+			);
+			$report = ( new WordPressSitePersistence() )->apply( CompiledSitePlan::from_sections( entities: array( $page ) ) );
+
+			self::assertFalse( $report->is_success() );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_CONFLICT', $report->results()[0]->code() );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_site_apply_lock_blocks_concurrent_mutations_and_releases_after_each_apply(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array(
+				'etch_builders_site_apply_lock' => 'honestlydesign/etch-builders:' . time(),
+			);
+			$GLOBALS['etch_builders_site_persistence_posts'] = array();
+			$GLOBALS['etch_builders_site_persistence_meta']  = array();
+
+			$style = CompiledSiteResource::new( CompiledSiteResourceType::STYLE, 'style:hero', array( 'selector' => '.hero', 'css' => 'color:red;' ) );
+			$plan  = CompiledSitePlan::from_sections(
+				styles: array( $style ),
+				ownership: array( CompiledSiteOwnership::new( 'site:root', 'style:hero', 'style' ) )
+			);
+
+			$blocked = ( new WordPressSitePersistence() )->apply( $plan );
+
+			self::assertTrue( $blocked->was_blocked() );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_APPLY_LOCKED', $blocked->blocking_diagnostics()[0]->code() );
+
+			$GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_apply_lock'] = 'honestlydesign/etch-builders:' . ( time() - 901 );
+			$recovered = ( new WordPressSitePersistence() )->apply( $plan );
+
+			self::assertSame( array( 'created' ), $this->outcomes( $recovered ) );
+			self::assertArrayNotHasKey( 'etch_builders_site_apply_lock', $GLOBALS['etch_builders_site_persistence_options'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_partial_stylesheet_write_rolls_back_prior_option_writes(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array(
+				'oh_my_id_etch_builder_stylesheets' => array( 'kept' => array( 'name' => 'kept', 'css' => 'a{}' ) ),
+			);
+			$GLOBALS['etch_builders_site_persistence_posts'] = array();
+			$GLOBALS['etch_builders_site_persistence_meta']  = array();
+			$GLOBALS['etch_builders_site_persistence_failing_option'] = 'oh_my_id_etch_builder_stylesheets';
+
+			$asset = CompiledSiteResource::new(
+				CompiledSiteResourceType::ASSET,
+				'asset:stylesheet:site:root:global:hash',
+				array( 'type' => 'stylesheet', 'id' => 'global', 'path' => '/tmp/global.css', 'css' => 'body { color: red; }' )
+			);
+			$plan = CompiledSitePlan::from_sections(
+				assets: array( $asset ),
+				ownership: array( CompiledSiteOwnership::new( 'site:root', $asset->identity(), 'stylesheet' ) )
+			);
+
+			$report = ( new WordPressSitePersistence() )->apply( $plan );
+
+			self::assertFalse( $report->is_success() );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', $report->results()[0]->code() );
+			self::assertSame(
+				array( 'kept' => array( 'name' => 'kept', 'css' => 'a{}' ) ),
+				$GLOBALS['etch_builders_site_persistence_options']['oh_my_id_etch_builder_stylesheets']
+			);
+			self::assertArrayNotHasKey( 'etch_builders_site_persistence_resources', $GLOBALS['etch_builders_site_persistence_options'] );
+			self::assertArrayNotHasKey( 'global', $GLOBALS['etch_builders_site_persistence_options']['etch_global_stylesheets'] ?? array() );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
 		public function test_recorded_style_orphans_are_deleted_but_unrecorded_native_styles_survive(): void {
 			$this->install_wordpress_option_stubs();
 			$GLOBALS['etch_builders_site_persistence_options'] = array(
@@ -1213,6 +1331,10 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 		if ( ! function_exists( 'update_option' ) ) {
 			function update_option( string $option, mixed $value, bool $autoload = true ): bool {
 				etch_builders_site_persistence_record_write( 'update_option' );
+				if ( ( $GLOBALS['etch_builders_site_persistence_failing_option'] ?? null ) === $option ) {
+					return false;
+				}
+
 				$GLOBALS['etch_builders_site_persistence_options'][ $option ] = $value;
 
 				return true;
