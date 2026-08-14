@@ -1204,7 +1204,7 @@ final class WordPressSitePersistenceStore implements SitePersistenceResourceStor
 
 		$option_key     = (string) array_key_first( $matches );
 		$native_payload = $matches[ $option_key ];
-		unset( $native_payload['_omide_builder_hash'] );
+		unset( $native_payload['_omide_builder_hash'], $native_payload['_preset_hash'] );
 		$native_payload['id'] = $option_key;
 		$stored = $this->stored_entity( $identity );
 		try {

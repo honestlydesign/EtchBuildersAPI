@@ -27,6 +27,7 @@ final class CoreComponentCompositionAuthoringContractTest extends TestCase {
 				'site.component.instance',
 				'site.component.slot',
 				'site.ome.composition',
+				'site.dynamic.loop',
 			),
 			array_map( static fn ( $capability ): string => $capability->id(), $catalog->capabilities() )
 		);
@@ -65,6 +66,7 @@ final class CoreComponentCompositionAuthoringContractTest extends TestCase {
 		);
 		self::assertSame( array( 'slot' ), $this->method_names( $catalog, 'site.component.slot' ) );
 		self::assertSame( array( 'for_key', 'prop_value', 'expression_prop', 'class_prop', 'slot' ), $this->method_names( $catalog, 'site.ome.composition' ) );
+		self::assertSame( array( 'new', 'id', 'key', 'native_dependency', 'wp_query' ), $this->method_names( $catalog, 'site.dynamic.loop' ) );
 		self::assertNotContains( 'ref_by_key', $this->method_names( $catalog, 'site.component.instance' ) );
 		self::assertNotContains( 'prop_group', $this->method_names( $catalog, 'site.ome.composition' ) );
 	}
@@ -103,6 +105,7 @@ final class CoreComponentCompositionAuthoringContractTest extends TestCase {
 		self::assertSame( array( 'positive', 'recipe' ), $map->missing_evidence_kinds( 'site.component.instance' ) );
 		self::assertSame( array( 'positive', 'negative' ), $map->missing_evidence_kinds( 'site.component.slot' ) );
 		self::assertSame( array( 'positive', 'negative' ), $map->missing_evidence_kinds( 'site.ome.composition' ) );
+		self::assertSame( array( 'positive', 'negative', 'recipe' ), $map->missing_evidence_kinds( 'site.dynamic.loop' ) );
 	}
 
 	public function test_catalog_loads_in_a_composer_only_process_without_wordpress_shims(): void {
@@ -154,6 +157,7 @@ final class CoreComponentCompositionAuthoringContractTest extends TestCase {
 			array(
 				'recipe.site.component'              => true,
 				'recipe.site.page'                   => true,
+				'recipe.site.native-loop-dependency' => true,
 				'recipe.negative.component-path'     => true,
 				'recipe.negative.class-style-id'     => true,
 				'recipe.negative.loop-expression'    => true,

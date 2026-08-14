@@ -25,7 +25,7 @@ final class AuthoringRecipeTest extends TestCase {
 		$catalog = CoreAuthoringRecipeCatalog::new();
 
 		self::assertSame(
-			array( 'recipe.site.component', 'recipe.site.page' ),
+			array( 'recipe.site.component', 'recipe.site.page', 'recipe.site.native-loop-dependency' ),
 			array_map(
 				static fn ( array $recipe ): string => $recipe['id'],
 				$catalog->to_array()['recipes']
@@ -43,7 +43,7 @@ final class AuthoringRecipeTest extends TestCase {
 		self::assertSame( $page->expected_outcomes()->to_array(), $page->to_array()['expected_outcomes'] );
 
 		$results = $catalog->execute_all();
-		self::assertCount( 2, $results );
+		self::assertCount( 3, $results );
 		foreach ( $results as $result ) {
 			self::assertTrue( $result->assertions_passed(), $result->failure_message() );
 			self::assertNotNull( $result->plan() );

@@ -66,6 +66,11 @@ final class LoopPreset {
 	private bool $overwrite = false;
 
 	/**
+	 * Whether the exact preset must already be provided by the native runtime.
+	 */
+	private bool $native_dependency = false;
+
+	/**
 	 * Loop type.
 	 *
 	 * @var string|null
@@ -111,6 +116,7 @@ final class LoopPreset {
 	 * Create a new LoopPreset builder.
 	 *
 	 * @param string $name Preset name.
+	 * @authoring-contract-version 1.0
 	 */
 	public static function new( string $name ): self {
 		return new self( $name );
@@ -121,6 +127,7 @@ final class LoopPreset {
 	 *
 	 * @param string $id Preset ID.
 	 * @throws InvalidArgumentException When the ID is not a sanitized key.
+	 * @authoring-contract-version 1.0
 	 */
 	public function id( string $id ): self {
 		$this->id = self::validate_sanitized_identifier( $id, 'ID' );
@@ -133,6 +140,7 @@ final class LoopPreset {
 	 *
 	 * @param string $key Preset key.
 	 * @throws InvalidArgumentException When the key is not a sanitized key.
+	 * @authoring-contract-version 1.0
 	 */
 	public function key( string $key ): self {
 		$this->key = self::validate_sanitized_identifier( $key, 'key' );
@@ -177,10 +185,29 @@ final class LoopPreset {
 	}
 
 	/**
+	 * Require this exact preset from the native runtime without managing it.
+	 *
+	 * @authoring-contract-version 1.0
+	 */
+	public function native_dependency( bool $required = true ): self {
+		$this->native_dependency = $required;
+
+		return $this;
+	}
+
+	/**
+	 * Whether persistence must verify rather than manage this preset.
+	 */
+	public function is_native_dependency(): bool {
+		return $this->native_dependency;
+	}
+
+	/**
 	 * Configure a WP_Query loop preset.
 	 *
 	 * @param array<string, mixed> $args WP_Query args.
 	 * @throws InvalidArgumentException When args are empty or numerically keyed.
+	 * @authoring-contract-version 1.0
 	 */
 	public function wp_query( array $args ): self {
 		self::validate_non_empty_args( $args, 'wp-query' );
@@ -350,6 +377,13 @@ final class LoopPreset {
 	 * @throws InvalidArgumentException When the preset has no config.
 	 */
 	public function register(): bool|RegistrationResult {
+		if ( $this->native_dependency ) {
+			return RegistrationResult::error(
+				'ETCH_LOOP_NATIVE_VERIFY_ONLY',
+				'Native loop dependencies are verify-only and cannot be registered by the Builder.'
+			);
+		}
+
 		$this->register_internal();
 
 		$clean_preset = $this->to_array();

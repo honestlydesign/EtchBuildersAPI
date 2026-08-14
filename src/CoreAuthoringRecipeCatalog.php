@@ -21,7 +21,8 @@ final class CoreAuthoringRecipeCatalog {
 	public static function new(): AuthoringRecipeCatalog {
 		return AuthoringRecipeCatalog::from_recipes(
 			new CoreComponentAuthoringRecipe(),
-			new CorePageAuthoringRecipe()
+			new CorePageAuthoringRecipe(),
+			new NativeLoopDependencyAuthoringRecipe()
 		);
 	}
 }

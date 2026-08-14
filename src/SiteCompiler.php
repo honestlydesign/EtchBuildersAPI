@@ -70,11 +70,12 @@ final class SiteCompiler {
 		$style_owners  = array();
 		$asset_ids     = array();
 		$loop_payloads = array();
+		$loop_intents  = array();
 		$loop_keys     = array();
 		$site_assets   = self::read_lane( $definition, 'global_assets', $diagnostics );
 		$supporting    = self::read_lane( $definition, 'supporting_definitions', $diagnostics );
 
-		self::prepare_supporting_definitions( $supporting, $loop_payloads, $loop_keys, $style_owners, $diagnostics );
+		self::prepare_supporting_definitions( $supporting, $loop_payloads, $loop_intents, $loop_keys, $style_owners, $diagnostics );
 
 		$component_result = self::read_lane( $definition, 'components', $diagnostics );
 		foreach ( $component_result as $component ) {
@@ -105,7 +106,7 @@ final class SiteCompiler {
 
 		self::validate_dependencies( $dependencies, $pattern_keys, $diagnostics );
 		self::validate_pattern_cycles( $pattern_graph, $diagnostics );
-		self::compile_supporting_entities( $loop_payloads, $supporting, $entities, $diagnostics );
+		self::compile_supporting_entities( $loop_payloads, $loop_intents, $supporting, $entities, $diagnostics );
 		self::compile_global_assets( $site_assets, $assets, $asset_ids, $ownership, $diagnostics );
 		self::compile_styles( $style_owners, $styles, $ownership, $diagnostics );
 
@@ -555,11 +556,12 @@ final class SiteCompiler {
 	 *
 	 * @param array<int, mixed>                 $supporting
 	 * @param array<string, array<string,mixed>> $loop_payloads
+	 * @param array<string, CompiledSiteEntityPersistenceIntent> $loop_intents
 	 * @param array<string, true>                $loop_keys
 	 * @param array<string, array<string, true>> $style_owners
 	 * @param array<int, CompiledSiteDiagnostic> $diagnostics
 	 */
-	private static function prepare_supporting_definitions( array $supporting, array &$loop_payloads, array &$loop_keys, array &$style_owners, array &$diagnostics ): void {
+	private static function prepare_supporting_definitions( array $supporting, array &$loop_payloads, array &$loop_intents, array &$loop_keys, array &$style_owners, array &$diagnostics ): void {
 		foreach ( $supporting as $definition ) {
 			if ( $definition instanceof LoopPreset ) {
 				$identity = 'loop_preset:' . $definition->get_key();
@@ -567,6 +569,9 @@ final class SiteCompiler {
 					$loop_payload = $definition->to_array();
 					$loop_payload['id'] = $definition->get_id();
 					$loop_payloads[ $definition->get_key() ] = $loop_payload;
+					$loop_intents[ $definition->get_key() ] = $definition->is_native_dependency()
+						? CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE
+						: CompiledSiteEntityPersistenceIntent::MANAGED;
 					$loop_keys[ $definition->get_key() ] = true;
 				} catch ( Throwable $throwable ) {
 					$diagnostics[] = self::error( self::LOOP_INVALID, $throwable->getMessage(), $identity );
@@ -593,14 +598,20 @@ final class SiteCompiler {
 	 * Add loop and catalog supporting entities to the compiled entity section.
 	 *
 	 * @param array<string, array<string,mixed>> $loop_payloads
+	 * @param array<string, CompiledSiteEntityPersistenceIntent> $loop_intents
 	 * @param array<int, mixed>                  $supporting
 	 * @param array<int, CompiledSiteEntity>     $entities
 	 * @param array<int, CompiledSiteDiagnostic> $diagnostics
 	 */
-	private static function compile_supporting_entities( array $loop_payloads, array $supporting, array &$entities, array &$diagnostics ): void {
+	private static function compile_supporting_entities( array $loop_payloads, array $loop_intents, array $supporting, array &$entities, array &$diagnostics ): void {
 		foreach ( $loop_payloads as $key => $payload ) {
 			try {
-				$entities[] = CompiledSiteEntity::new( CompiledSiteEntityType::LOOP_PRESET, 'loop_preset:' . $key, $payload );
+				$entities[] = CompiledSiteEntity::new(
+					CompiledSiteEntityType::LOOP_PRESET,
+					'loop_preset:' . $key,
+					$payload,
+					$loop_intents[ $key ] ?? CompiledSiteEntityPersistenceIntent::MANAGED
+				);
 			} catch ( Throwable $throwable ) {
 				$diagnostics[] = self::error( self::LOOP_INVALID, $throwable->getMessage(), 'loop_preset:' . $key );
 			}

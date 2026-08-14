@@ -13,6 +13,7 @@ use HonestlyDesign\EtchBuilders\BlockSequence;
 use HonestlyDesign\EtchBuilders\Component;
 use HonestlyDesign\EtchBuilders\ClassStyleReference;
 use HonestlyDesign\EtchBuilders\CompiledSiteEntityType;
+use HonestlyDesign\EtchBuilders\CompiledSiteEntityPersistenceIntent;
 use HonestlyDesign\EtchBuilders\Environment;
 use HonestlyDesign\EtchBuilders\EtchBlocks\TextBlock;
 use HonestlyDesign\EtchBuilders\EtchBlocks\ElementBlock;
@@ -27,6 +28,7 @@ use HonestlyDesign\EtchBuilders\Page;
 use HonestlyDesign\EtchBuilders\Pattern;
 use HonestlyDesign\EtchBuilders\PatternUse;
 use HonestlyDesign\EtchBuilders\Post;
+use HonestlyDesign\EtchBuilders\RegistrationResult;
 use HonestlyDesign\EtchBuilders\SiteCompiler;
 use HonestlyDesign\EtchBuilders\SiteDefinition;
 use HonestlyDesign\EtchBuilders\SiteHomePolicy;
@@ -232,6 +234,42 @@ final class SiteCompilerTest extends TestCase {
 		self::assertContains( 'component:Hero>style:hero-style:presentation_class', array_map( static fn ( $ownership ): string => $ownership->owner_identity() . '>' . $ownership->resource_identity() . ':' . $ownership->role(), $plan->ownership() ) );
 		self::assertSame( $before, Environment::storage()->get( 'etch_styles', array() ) );
 		self::assertSame( 'Welcome', $plan->entities()[0]->payload()['properties'][0]['default'] );
+	}
+
+	public function test_native_loop_dependency_compiles_as_verify_only_without_losing_its_typed_edge(): void {
+		$loop = LoopPreset::new( 'Posts' )
+			->id( 'k7mrbkq' )
+			->key( 'posts' )
+			->native_dependency()
+			->wp_query( array( 'post_type' => 'post' ) );
+		$page = $this->typed_page( 'blog' )->blocks_sequence(
+			BlockSequence::new()->append(
+				\HonestlyDesign\EtchBuilders\Block::new( 'loop', array( 'target' => '', 'loopId' => 'posts' ) )
+			)
+		);
+
+		$plan = SiteDefinition::new()
+			->page( $page )
+			->supporting( $loop )
+			->compile();
+
+		self::assertFalse( $plan->has_errors() );
+		self::assertSame( array( 'page:slug:blog', 'loop_preset:posts' ), $plan->resolved_identities() );
+		self::assertSame( CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE, $plan->entities()[1]->persistence_intent() );
+		self::assertSame( 'verify_native', $plan->entities()[1]->to_array()['persistence_intent'] ?? null );
+		self::assertSame( 'loop_preset:posts', $plan->dependencies()[0]->dependency_identity() );
+	}
+
+	public function test_native_loop_dependency_cannot_be_registered_as_builder_owned(): void {
+		$result = LoopPreset::new( 'Posts' )
+			->key( 'posts' )
+			->native_dependency()
+			->wp_query( array( 'post_type' => 'post' ) )
+			->register();
+
+		self::assertInstanceOf( RegistrationResult::class, $result );
+		self::assertFalse( $result->is_success() );
+		self::assertSame( 'ETCH_LOOP_NATIVE_VERIFY_ONLY', $result->get_error_code() );
 	}
 
 	public function test_unknown_loop_reference_is_a_stable_compiler_error(): void {
