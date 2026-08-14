@@ -13,6 +13,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 	use HonestlyDesign\EtchBuilders\CompiledSiteDiagnosticSeverity;
 	use HonestlyDesign\EtchBuilders\CompiledSiteDependency;
 	use HonestlyDesign\EtchBuilders\CompiledSiteEntity;
+	use HonestlyDesign\EtchBuilders\CompiledSiteEntityPersistenceIntent;
 	use HonestlyDesign\EtchBuilders\CompiledSiteEntityType;
 	use HonestlyDesign\EtchBuilders\CompiledSiteOwnership;
 	use HonestlyDesign\EtchBuilders\CompiledSitePlan;
@@ -144,6 +145,61 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 			self::assertFalse( $report->is_success() );
 			self::assertSame( array( 'conflict' ), $this->outcomes( $report ) );
 			self::assertSame( 'ETCH_SITE_PERSISTENCE_CONFLICT', $report->results()[0]->code() );
+		}
+
+		public function test_exact_native_dependency_is_verified_without_claiming_or_writing_it(): void {
+			$entity = $this->native_loop_entity();
+			$store  = new InMemorySitePersistenceStore();
+			$store->seed( SitePersistenceRecord::from_entity( $entity, false ) );
+
+			$report = ( new InMemorySitePersistence( $store ) )->apply(
+				CompiledSitePlan::from_sections( entities: array( $entity ) )
+			);
+
+			self::assertTrue( $report->is_success() );
+			self::assertSame( array( 'unchanged' ), $this->outcomes( $report ) );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_NATIVE_VERIFIED', $report->results()[0]->code() );
+			$stored = $store->find( $entity->identity() );
+			self::assertNotNull( $stored );
+			self::assertFalse( $stored->is_owned() );
+		}
+
+		public function test_missing_native_dependency_fails_closed_without_creating_it(): void {
+			$store  = new CountingSitePersistenceStore();
+			$entity = $this->native_loop_entity();
+
+			$report = ( new InMemorySitePersistence( $store ) )->apply(
+				CompiledSitePlan::from_sections( entities: array( $entity ) )
+			);
+
+			self::assertFalse( $report->is_success() );
+			self::assertSame( array( 'conflict' ), $this->outcomes( $report ) );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_NATIVE_MISSING', $report->results()[0]->code() );
+			self::assertSame( 1, $store->find_calls );
+			self::assertSame( 0, $store->create_calls );
+			self::assertSame( 0, $store->update_calls );
+		}
+
+		public function test_drifted_native_dependency_fails_closed_without_overwriting_it(): void {
+			$entity = $this->native_loop_entity();
+			$drifted = CompiledSiteEntity::new(
+				CompiledSiteEntityType::LOOP_PRESET,
+				$entity->identity(),
+				array_merge( $entity->payload(), array( 'name' => 'Changed upstream' ) )
+			);
+			$store = new InMemorySitePersistenceStore();
+			$store->seed( SitePersistenceRecord::from_entity( $drifted, false ) );
+
+			$report = ( new InMemorySitePersistence( $store ) )->apply(
+				CompiledSitePlan::from_sections( entities: array( $entity ) )
+			);
+
+			self::assertFalse( $report->is_success() );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_NATIVE_DRIFT', $report->results()[0]->code() );
+			$stored = $store->find( $entity->identity() );
+			self::assertNotNull( $stored );
+			self::assertSame( 'Changed upstream', $stored->payload()['name'] );
+			self::assertFalse( $stored->is_owned() );
 		}
 
 		public function test_store_failure_is_returned_as_a_typed_failed_outcome(): void {
@@ -300,6 +356,117 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 			self::assertIsArray( $loops['recent-id'] );
 			self::assertArrayNotHasKey( 'id', $loops['recent-id'] );
 			self::assertArrayHasKey( 'foreign', $loops );
+
+			$loops['recent-id']['_preset_hash'] = 'etch-owned-metadata';
+			$GLOBALS['etch_builders_site_persistence_options']['etch_loops'] = $loops;
+			$with_etch_metadata = $persistence->apply( CompiledSitePlan::from_sections( entities: array( $loop ) ) );
+			self::assertSame( array( 'unchanged' ), $this->outcomes( $with_etch_metadata ) );
+
+			$drifted_loop = CompiledSiteEntity::new(
+				CompiledSiteEntityType::LOOP_PRESET,
+				'loop_preset:recent-posts',
+				array(
+					'name'   => 'Recent Posts',
+					'key'    => 'recent-posts',
+					'global' => true,
+					'config' => array( 'type' => 'main-query', 'args' => array( 'post_type' => 'post' ) ),
+					'id'     => 'recent-id',
+				)
+			);
+			$repaired = $persistence->apply( CompiledSitePlan::from_sections( entities: array( $drifted_loop ) ) );
+			self::assertSame( array( 'updated' ), $this->outcomes( $repaired ) );
+			self::assertSame( array( 'post_type' => 'post' ), $GLOBALS['etch_builders_site_persistence_options']['etch_loops']['recent-id']['config']['args'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_wordpress_adapter_verifies_the_exact_etch_native_loop_without_mutating_metadata(): void {
+			$this->install_wordpress_option_stubs();
+			$native = array(
+				'name'    => 'Posts',
+				'key'     => 'posts',
+				'global'  => true,
+				'config'  => array( 'type' => 'wp-query', 'args' => array( 'post_type' => 'post' ) ),
+				'_preset_hash' => 'etch-owned-metadata',
+			);
+			$GLOBALS['etch_builders_site_persistence_options'] = array(
+				'etch_loops' => array( 'k7mrbkq' => $native ),
+			);
+			$GLOBALS['etch_builders_site_persistence_write_calls'] = array();
+			$entity = $this->native_loop_entity();
+
+			$report = ( new WordPressSitePersistence() )->apply(
+				CompiledSitePlan::from_sections( entities: array( $entity ) )
+			);
+
+			self::assertTrue( $report->is_success() );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_NATIVE_VERIFIED', $report->results()[0]->code() );
+			self::assertSame( $native, $GLOBALS['etch_builders_site_persistence_options']['etch_loops']['k7mrbkq'] );
+			self::assertArrayNotHasKey( 'etch_builders_site_persistence_entities', $GLOBALS['etch_builders_site_persistence_options'] );
+			self::assertSame( array(), $GLOBALS['etch_builders_site_persistence_write_calls'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_wordpress_adapter_rejects_ambiguous_native_loop_keys_without_mutation(): void {
+			$this->install_wordpress_option_stubs();
+			$native = array(
+				'name'   => 'Posts',
+				'key'    => 'posts',
+				'global' => true,
+				'config' => array( 'type' => 'wp-query', 'args' => array( 'post_type' => 'post' ) ),
+			);
+			$GLOBALS['etch_builders_site_persistence_options'] = array(
+				'etch_loops' => array( 'first' => $native, 'second' => $native ),
+			);
+			$GLOBALS['etch_builders_site_persistence_write_calls'] = array();
+			$entity = $this->native_loop_entity();
+
+			$report = ( new WordPressSitePersistence() )->apply(
+				CompiledSitePlan::from_sections( entities: array( $entity ) )
+			);
+
+			self::assertFalse( $report->is_success() );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_NATIVE_MISSING', $report->results()[0]->code() );
+			self::assertSame( array( 'first' => $native, 'second' => $native ), $GLOBALS['etch_builders_site_persistence_options']['etch_loops'] );
+			self::assertSame( array(), $GLOBALS['etch_builders_site_persistence_write_calls'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_wordpress_adapter_rejects_wrong_native_id_and_kind_without_mutation(): void {
+			$this->install_wordpress_option_stubs();
+			$native = array(
+				'name'   => 'Posts',
+				'key'    => 'posts',
+				'global' => true,
+				'config' => array( 'type' => 'wp-query', 'args' => array( 'post_type' => 'post' ) ),
+			);
+			$entity = $this->native_loop_entity();
+
+			foreach ( array(
+				'wrong-id'   => $native,
+				'k7mrbkq'    => array_merge( $native, array( 'config' => array( 'type' => 'main-query', 'args' => array() ) ) ),
+			) as $option_key => $stored_native ) {
+				$GLOBALS['etch_builders_site_persistence_options'] = array( 'etch_loops' => array( $option_key => $stored_native ) );
+				$GLOBALS['etch_builders_site_persistence_write_calls'] = array();
+				$before = $GLOBALS['etch_builders_site_persistence_options'];
+
+				$report = ( new WordPressSitePersistence() )->apply(
+					CompiledSitePlan::from_sections( entities: array( $entity ) )
+				);
+
+				self::assertFalse( $report->is_success() );
+				self::assertSame( 'ETCH_SITE_PERSISTENCE_NATIVE_DRIFT', $report->results()[0]->code(), $option_key );
+				self::assertSame( $before, $GLOBALS['etch_builders_site_persistence_options'], $option_key );
+				self::assertSame( array(), $GLOBALS['etch_builders_site_persistence_write_calls'], $option_key );
+			}
 		}
 
 		/**
@@ -1019,8 +1186,19 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 			}
 		}
 
+		if ( ! function_exists( 'etch_builders_site_persistence_record_write' ) ) {
+			function etch_builders_site_persistence_record_write( string $operation ): void {
+				if ( ! isset( $GLOBALS['etch_builders_site_persistence_write_calls'] ) || ! is_array( $GLOBALS['etch_builders_site_persistence_write_calls'] ) ) {
+					$GLOBALS['etch_builders_site_persistence_write_calls'] = array();
+				}
+
+				$GLOBALS['etch_builders_site_persistence_write_calls'][ $operation ] = ( $GLOBALS['etch_builders_site_persistence_write_calls'][ $operation ] ?? 0 ) + 1;
+			}
+		}
+
 		if ( ! function_exists( 'add_option' ) ) {
 			function add_option( string $option, mixed $value = '', string $deprecated = '', bool $autoload = true ): bool {
+				etch_builders_site_persistence_record_write( 'add_option' );
 				$options = $GLOBALS['etch_builders_site_persistence_options'] ?? array();
 				if ( array_key_exists( $option, $options ) ) {
 					return false;
@@ -1034,6 +1212,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 
 		if ( ! function_exists( 'update_option' ) ) {
 			function update_option( string $option, mixed $value, bool $autoload = true ): bool {
+				etch_builders_site_persistence_record_write( 'update_option' );
 				$GLOBALS['etch_builders_site_persistence_options'][ $option ] = $value;
 
 				return true;
@@ -1042,6 +1221,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 
 		if ( ! function_exists( 'delete_option' ) ) {
 			function delete_option( string $option ): bool {
+				etch_builders_site_persistence_record_write( 'delete_option' );
 				$exists = array_key_exists( $option, $GLOBALS['etch_builders_site_persistence_options'] ?? array() );
 				unset( $GLOBALS['etch_builders_site_persistence_options'][ $option ] );
 
@@ -1106,11 +1286,12 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 
 		if ( ! function_exists( 'wp_insert_post' ) ) {
 			function wp_insert_post( array $post_data, bool $wp_error = false ): int {
+				etch_builders_site_persistence_record_write( 'wp_insert_post' );
 				if ( $GLOBALS['etch_builders_site_persistence_throw_insert'] ?? false ) {
 					throw new RuntimeException( 'insert failed' );
 				}
 
-				$id             = count( $GLOBALS['etch_builders_site_persistence_posts'] ?? array() ) + 1;
+				$id              = count( $GLOBALS['etch_builders_site_persistence_posts'] ?? array() ) + 1;
 				$post_data['ID'] = $id;
 				$GLOBALS['etch_builders_site_persistence_posts'][ $id ] = (object) $post_data;
 
@@ -1120,6 +1301,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 
 		if ( ! function_exists( 'wp_update_post' ) ) {
 			function wp_update_post( array $post_data, bool $wp_error = false ): int {
+				etch_builders_site_persistence_record_write( 'wp_update_post' );
 				$id = (int) ( $post_data['ID'] ?? 0 );
 				if ( $id <= 0 || ! isset( $GLOBALS['etch_builders_site_persistence_posts'][ $id ] ) ) {
 					return 0;
@@ -1136,6 +1318,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 
 		if ( ! function_exists( 'wp_delete_post' ) ) {
 			function wp_delete_post( int $post_id, bool $force_delete = false ): ?object {
+				etch_builders_site_persistence_record_write( 'wp_delete_post' );
 				if ( $GLOBALS['etch_builders_site_persistence_fail_delete'] ?? false ) {
 					return null;
 				}
@@ -1149,6 +1332,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 
 		if ( ! function_exists( 'update_post_meta' ) ) {
 			function update_post_meta( int $post_id, string $key, mixed $value ): bool {
+				etch_builders_site_persistence_record_write( 'update_post_meta' );
 				if ( ( $GLOBALS['etch_builders_site_persistence_fail_meta'] ?? null ) === $key ) {
 					return false;
 				}
@@ -1173,6 +1357,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 
 		if ( ! function_exists( 'wp_set_object_terms' ) ) {
 			function wp_set_object_terms( int $post_id, array $terms, string $taxonomy ): array|WP_Error {
+				etch_builders_site_persistence_record_write( 'wp_set_object_terms' );
 				if ( $GLOBALS['etch_builders_site_persistence_fail_terms'] ?? false ) {
 					return new WP_Error( 'term_failed', 'term synchronization failed' );
 				}
@@ -1234,6 +1419,21 @@ PHP
 			return CompiledSitePlan::from_sections(
 				entities: array( $entity ),
 				styles: array( $style )
+			);
+		}
+
+		private function native_loop_entity(): CompiledSiteEntity {
+			return CompiledSiteEntity::new(
+				CompiledSiteEntityType::LOOP_PRESET,
+				'loop_preset:posts',
+				array(
+					'id'     => 'k7mrbkq',
+					'name'   => 'Posts',
+					'key'    => 'posts',
+					'global' => true,
+					'config' => array( 'type' => 'wp-query', 'args' => array( 'post_type' => 'post' ) ),
+				),
+				CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE
 			);
 		}
 	}

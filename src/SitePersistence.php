@@ -53,23 +53,39 @@ class SitePersistence implements SitePersistenceInterface {
 			return SitePersistenceReport::new( blocking_diagnostics: $ownership_diagnostics );
 		}
 
+		/** @var array<int, array{record: SitePersistenceRecord, intent: CompiledSiteEntityPersistenceIntent}> $records */
 		$records = array();
 		foreach ( $ordered['entities'] as $entity ) {
-			$records[] = SitePersistenceRecord::from_entity( $entity );
+			$records[] = array(
+				'record' => SitePersistenceRecord::from_entity( $entity ),
+				'intent' => $entity->persistence_intent(),
+			);
 		}
 		foreach ( $plan->styles() as $style ) {
-			$records[] = SitePersistenceRecord::from_resource( $style, true, $this->ownership_for( $plan, $style->identity() ) );
+			$records[] = array(
+				'record' => SitePersistenceRecord::from_resource( $style, true, $this->ownership_for( $plan, $style->identity() ) ),
+				'intent' => CompiledSiteEntityPersistenceIntent::MANAGED,
+			);
 		}
 		foreach ( $plan->assets() as $asset ) {
-			$records[] = SitePersistenceRecord::from_resource( $asset, true, $this->ownership_for( $plan, $asset->identity() ) );
+			$records[] = array(
+				'record' => SitePersistenceRecord::from_resource( $asset, true, $this->ownership_for( $plan, $asset->identity() ) ),
+				'intent' => CompiledSiteEntityPersistenceIntent::MANAGED,
+			);
 		}
 		if ( $plan->has_home_page_policy() && SiteHomePolicyMode::NONE !== $plan->home_page_policy()->mode() ) {
-			$records[] = SitePersistenceRecord::from_home_policy( $plan->home_page_policy() );
+			$records[] = array(
+				'record' => SitePersistenceRecord::from_home_policy( $plan->home_page_policy() ),
+				'intent' => CompiledSiteEntityPersistenceIntent::MANAGED,
+			);
 		}
 
 		$results = array();
-		foreach ( $records as $record ) {
-			$results[] = $this->apply_record( $record );
+		foreach ( $records as $entry ) {
+			$record = $entry['record'];
+			$results[] = CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE === $entry['intent']
+				? $this->verify_native_record( $record )
+				: $this->apply_record( $record );
 		}
 
 		if ( $this->all_results_succeeded( $results ) && $this->store instanceof SitePersistenceResourceStoreInterface ) {
@@ -292,6 +308,51 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		return $this->write( $record, true );
+	}
+
+	/**
+	 * Verify one exact external runtime prerequisite without writing or claiming it.
+	 */
+	private function verify_native_record( SitePersistenceRecord $expected ): SitePersistenceResult {
+		try {
+			$observed = $this->store->find( $expected->identity() );
+		} catch ( Throwable $throwable ) {
+			return self::failure( $expected->identity(), $throwable );
+		}
+
+		if ( null === $observed ) {
+			return SitePersistenceResult::new(
+				$expected->identity(),
+				SitePersistenceOutcome::CONFLICT,
+				'ETCH_SITE_PERSISTENCE_NATIVE_MISSING',
+				'Exact native Site dependency is missing or ambiguous.'
+			);
+		}
+
+		if ( $observed->is_owned() ) {
+			return SitePersistenceResult::new(
+				$expected->identity(),
+				SitePersistenceOutcome::CONFLICT,
+				'ETCH_SITE_PERSISTENCE_NATIVE_OWNERSHIP',
+				'Native Site dependency is unexpectedly Builder-owned.'
+			);
+		}
+
+		if ( $observed->kind() !== $expected->kind() || $observed->fingerprint() !== $expected->fingerprint() ) {
+			return SitePersistenceResult::new(
+				$expected->identity(),
+				SitePersistenceOutcome::CONFLICT,
+				'ETCH_SITE_PERSISTENCE_NATIVE_DRIFT',
+				'Native Site dependency does not match the exact compiled contract.'
+			);
+		}
+
+		return SitePersistenceResult::new(
+			$expected->identity(),
+			SitePersistenceOutcome::UNCHANGED,
+			'ETCH_SITE_PERSISTENCE_NATIVE_VERIFIED',
+			'Exact native Site dependency is available and remains externally owned.'
+		);
 	}
 
 	private function write( SitePersistenceRecord $record, bool $update ): SitePersistenceResult {

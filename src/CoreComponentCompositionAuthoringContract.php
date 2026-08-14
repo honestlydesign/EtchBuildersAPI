@@ -25,7 +25,7 @@ final class CoreComponentCompositionAuthoringContract {
 	/** Return the curated Pending declarations for the schema-backed lane. */
 	public static function capabilities(): AuthoringCapabilityCatalog {
 		$references = AuthoringCapabilityReferenceIndex::new(
-			array( 'recipe.negative.class-style-id', 'recipe.negative.component-path', 'recipe.reference.ome' ),
+			array( 'recipe.negative.class-style-id', 'recipe.negative.component-path', 'recipe.reference.ome', 'recipe.site.native-loop-dependency' ),
 			array( 'ETCH_CLASS_UNKNOWN_ID', 'ETCH_SITE_COMPONENT_CONTRACT_INVALID' ),
 			array(
 				'evidence.site.style.class.reference',
@@ -69,6 +69,14 @@ final class CoreComponentCompositionAuthoringContract {
 				array( 'recipe.reference.ome' ),
 				array( 'ETCH_SITE_COMPONENT_CONTRACT_INVALID' ),
 				array( 'evidence.site.ome.composition' )
+			),
+			AuthoringCapability::pending(
+				'site.dynamic.loop',
+				'Native loop declarations are source facts only; the host must verify the exact Etch runtime record before persistence.',
+				array(),
+				array( 'recipe.site.native-loop-dependency' ),
+				array(),
+				array()
 			)
 		);
 	}
@@ -111,7 +119,15 @@ final class CoreComponentCompositionAuthoringContract {
 				AuthoringCapabilitySourceSymbol::method( ComponentExpression::class, 'source' )
 			),
 			AuthoringCapabilitySourceDeclaration::for_capability( 'site.component.slot', $component_block_symbols['slot'] ),
-			AuthoringCapabilitySourceDeclaration::for_capability( 'site.ome.composition', ...array_values( $component_block_symbols ) )
+			AuthoringCapabilitySourceDeclaration::for_capability( 'site.ome.composition', ...array_values( $component_block_symbols ) ),
+			AuthoringCapabilitySourceDeclaration::for_capability(
+				'site.dynamic.loop',
+				AuthoringCapabilitySourceSymbol::method( LoopPreset::class, 'new' ),
+				AuthoringCapabilitySourceSymbol::method( LoopPreset::class, 'id' ),
+				AuthoringCapabilitySourceSymbol::method( LoopPreset::class, 'key' ),
+				AuthoringCapabilitySourceSymbol::method( LoopPreset::class, 'native_dependency' ),
+				AuthoringCapabilitySourceSymbol::method( LoopPreset::class, 'wp_query' )
+			)
 		);
 	}
 

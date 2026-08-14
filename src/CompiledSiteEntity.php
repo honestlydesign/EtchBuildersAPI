@@ -21,7 +21,8 @@ final class CompiledSiteEntity {
 	private function __construct(
 		private readonly CompiledSiteEntityType $type,
 		private readonly string $identity,
-		private readonly array $payload
+		private readonly array $payload,
+		private readonly CompiledSiteEntityPersistenceIntent $persistence_intent
 	) {
 	}
 
@@ -32,12 +33,20 @@ final class CompiledSiteEntity {
 	 * @param string                 $identity Stable type:key identity.
 	 * @param array<string, mixed>   $payload  Serialized entity payload.
 	 */
-	public static function new( CompiledSiteEntityType $type, string $identity, array $payload ): self {
+	public static function new(
+		CompiledSiteEntityType $type,
+		string $identity,
+		array $payload,
+		CompiledSiteEntityPersistenceIntent $persistence_intent = CompiledSiteEntityPersistenceIntent::MANAGED
+	): self {
 		$identity = self::validate_identity( $identity, $type );
 		AcyclicArrayGuard::assert_acyclic( $payload );
 		$payload = ImmutableArray::copy( $payload, 'Compiled Site Entity payload must contain only scalar, null, or nested array values.' );
+		if ( CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE === $persistence_intent && CompiledSiteEntityType::LOOP_PRESET !== $type ) {
+			throw new InvalidArgumentException( 'Only a loop preset can currently be a verified native Site dependency.' );
+		}
 
-		return new self( $type, $identity, $payload );
+		return new self( $type, $identity, $payload, $persistence_intent );
 	}
 
 	public function type(): CompiledSiteEntityType {
@@ -55,15 +64,24 @@ final class CompiledSiteEntity {
 		return $this->payload;
 	}
 
+	public function persistence_intent(): CompiledSiteEntityPersistenceIntent {
+		return $this->persistence_intent;
+	}
+
 	/**
-	 * @return array{type: string, identity: string, payload: array<string, mixed>}
+	 * @return array{type: string, identity: string, payload: array<string, mixed>, persistence_intent?: string}
 	 */
 	public function to_array(): array {
-		return array(
+		$record = array(
 			'type'     => $this->type->value,
 			'identity' => $this->identity,
 			'payload'  => $this->payload,
 		);
+		if ( CompiledSiteEntityPersistenceIntent::MANAGED !== $this->persistence_intent ) {
+			$record['persistence_intent'] = $this->persistence_intent->value;
+		}
+
+		return $record;
 	}
 
 	private static function validate_identity( string $identity, CompiledSiteEntityType $type ): string {
