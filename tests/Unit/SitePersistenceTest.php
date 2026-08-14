@@ -1558,6 +1558,106 @@ PHP
 				CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE
 			);
 		}
+
+		/**
+		 * Seed the state a previous managed era leaves behind: an owned entity
+		 * ledger plus a Builder-stamped loop entry beside the native record.
+		 *
+		 * @return array{loops: array<string, mixed>, entities: array<string, mixed>}
+		 */
+		private function stale_managed_loop_state( string $stale_option_key ): array {
+			$persistence = new WordPressSitePersistence();
+			$managed     = CompiledSiteEntity::new(
+				CompiledSiteEntityType::LOOP_PRESET,
+				'loop_preset:posts',
+				array( 'id' => $stale_option_key, 'name' => 'Posts', 'key' => 'posts', 'global' => true, 'config' => array( 'type' => 'wp-query', 'args' => array( 'post_type' => 'post' ) ) )
+			);
+
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array();
+			$GLOBALS['etch_builders_site_persistence_posts']  = array();
+			$GLOBALS['etch_builders_site_persistence_meta']   = array();
+			$persistence->apply( CompiledSitePlan::from_sections( entities: array( $managed ) ) );
+
+			/** @var array<string, mixed> $loops */
+			$loops    = $GLOBALS['etch_builders_site_persistence_options']['etch_loops'];
+			$entities = $GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_entities'];
+
+			return array( 'loops' => $loops, 'entities' => $entities );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_stale_owned_ledger_on_the_native_record_is_retired_automatically(): void {
+			$stale = $this->stale_managed_loop_state( 'k7mrbkq' );
+			// The native Etch record replaced the Builder-written entry; only
+			// the stale owned ledger remained.
+			$GLOBALS['etch_builders_site_persistence_options']['etch_loops']['k7mrbkq'] = array(
+				'name'    => 'Posts',
+				'key'     => 'posts',
+				'global'  => true,
+				'config'  => array( 'type' => 'wp-query', 'args' => array( 'post_type' => 'post' ) ),
+				'_preset_hash' => 'etch-owned-metadata',
+			);
+
+			$report = ( new WordPressSitePersistence() )->apply(
+				CompiledSitePlan::from_sections( entities: array( $this->native_loop_entity() ) )
+			);
+
+			self::assertTrue( $report->is_success(), json_encode( $report->to_array(), JSON_THROW_ON_ERROR ) );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_NATIVE_VERIFIED', $report->results()[0]->code() );
+			self::assertArrayNotHasKey( 'loop_preset:posts', $GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_entities'] );
+			self::assertArrayHasKey( 'k7mrbkq', $GLOBALS['etch_builders_site_persistence_options']['etch_loops'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_builder_written_duplicate_loop_entry_is_removed_by_native_retirement(): void {
+			$stale = $this->stale_managed_loop_state( 'omide-posts' );
+			$GLOBALS['etch_builders_site_persistence_options']['etch_loops']['k7mrbkq'] = array(
+				'name'   => 'Posts',
+				'key'    => 'posts',
+				'global' => true,
+				'config' => array( 'type' => 'wp-query', 'args' => array( 'post_type' => 'post' ) ),
+			);
+
+			$report = ( new WordPressSitePersistence() )->apply(
+				CompiledSitePlan::from_sections( entities: array( $this->native_loop_entity() ) )
+			);
+
+			self::assertTrue( $report->is_success(), json_encode( $report->to_array(), JSON_THROW_ON_ERROR ) );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_NATIVE_VERIFIED', $report->results()[0]->code() );
+			self::assertArrayNotHasKey( 'omide-posts', $GLOBALS['etch_builders_site_persistence_options']['etch_loops'] );
+			self::assertArrayHasKey( 'k7mrbkq', $GLOBALS['etch_builders_site_persistence_options']['etch_loops'] );
+			self::assertArrayNotHasKey( 'loop_preset:posts', $GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_entities'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_foreign_modified_builder_entry_keeps_the_conflict_for_manual_review(): void {
+			$stale = $this->stale_managed_loop_state( 'omide-posts' );
+			$GLOBALS['etch_builders_site_persistence_options']['etch_loops']['omide-posts']['config']['args']['post_type'] = 'page';
+			$GLOBALS['etch_builders_site_persistence_options']['etch_loops']['k7mrbkq'] = array(
+				'name'   => 'Posts',
+				'key'    => 'posts',
+				'global' => true,
+				'config' => array( 'type' => 'wp-query', 'args' => array( 'post_type' => 'post' ) ),
+			);
+
+			$report = ( new WordPressSitePersistence() )->apply(
+				CompiledSitePlan::from_sections( entities: array( $this->native_loop_entity() ) )
+			);
+
+			self::assertFalse( $report->is_success() );
+			self::assertArrayHasKey( 'omide-posts', $GLOBALS['etch_builders_site_persistence_options']['etch_loops'] );
+			self::assertArrayHasKey( 'loop_preset:posts', $GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_entities'] );
+		}
 	}
 
 	/**
