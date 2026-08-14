@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace HonestlyDesign\EtchBuilders;
 
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceApplyLockInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceRecordAdoptionInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceNativeRetirementInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceResourceStoreInterface;
@@ -315,6 +316,10 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		if ( ! $current->is_owned() ) {
+			if ( $this->store instanceof SitePersistenceRecordAdoptionInterface && $this->store->adopt_unowned_record( $record ) ) {
+				return $this->write( $record, false );
+			}
+
 			return SitePersistenceResult::new(
 				$record->identity(),
 				SitePersistenceOutcome::CONFLICT,

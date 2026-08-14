@@ -17,6 +17,7 @@ use HonestlyDesign\EtchBuilders\CompiledSiteResource;
 use HonestlyDesign\EtchBuilders\CompiledSiteResourceType;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceApplyLockInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceNativeRetirementInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceRecordAdoptionInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceResourceStoreInterface;
 use HonestlyDesign\EtchBuilders\RegistrationResult;
 use HonestlyDesign\EtchBuilders\SiteHomePolicy;
@@ -31,7 +32,7 @@ use Throwable;
  * adapter keeps builder ownership and snapshots beside native WordPress data
  * so native records remain inspectable by Etch and other WordPress tooling.
  */
-final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInterface, SitePersistenceNativeRetirementInterface, SitePersistenceResourceStoreInterface {
+final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInterface, SitePersistenceNativeRetirementInterface, SitePersistenceRecordAdoptionInterface, SitePersistenceResourceStoreInterface {
 
 	private const OPTION_PREFIX = 'etch_builders_site_record_';
 
@@ -946,7 +947,12 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		if ( ! $update && array_key_exists( $style_id, $styles ) ) {
 			$stored = $this->stored_resource( $record->identity() );
 			if ( null === $stored || ! $stored->is_owned() ) {
-				return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_CONFLICT', 'Existing native Etch style is not owned by this builder.' );
+				if ( ! $this->native_style_is_builder_handoff( $styles[ $style_id ], $record->payload() ) ) {
+					return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_CONFLICT', 'Existing native Etch style is not owned by this builder.' );
+				}
+				// Adopt the Builder's own handoff-written style: the public
+				// payload matches exactly and the entry carries the internal
+				// authorship marker only Builder code can set.
 			}
 		}
 
@@ -991,6 +997,40 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		} catch ( Throwable ) {
 			return $stored;
 		}
+	}
+
+	/** {@inheritdoc} */
+	public function adopt_unowned_record( SitePersistenceRecord $record ): bool {
+		if ( ! str_starts_with( $record->identity(), 'style:' ) || ! \function_exists( 'get_option' ) ) {
+			return false;
+		}
+
+		$styles   = \get_option( self::STYLES_OPTION, array() );
+		$style_id = substr( $record->identity(), strlen( 'style:' ) );
+		return is_array( $styles )
+			&& array_key_exists( $style_id, $styles )
+			&& $this->native_style_is_builder_handoff( $styles[ $style_id ], $record->payload() );
+	}
+
+	/**
+	 * Whether one persisted native style entry is Builder-authored handoff
+	 * state that matches the compiled record exactly and may be adopted.
+	 *
+	 * @param mixed               $existing Persisted etch_styles entry.
+	 * @param array<string, mixed> $payload Compiled style payload.
+	 */
+	private function native_style_is_builder_handoff( mixed $existing, array $payload ): bool {
+		if ( ! is_array( $existing ) || true !== ( $existing['overwrite_on_register'] ?? null ) ) {
+			return false;
+		}
+
+		foreach ( array( 'selector', 'css', 'type' ) as $field ) {
+			if ( (string) ( $existing[ $field ] ?? '' ) !== (string) ( $payload[ $field ] ?? '' ) ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	private function persist_asset( SitePersistenceRecord $record, bool $update ): RegistrationResult {
