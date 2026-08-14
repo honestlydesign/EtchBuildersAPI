@@ -45,7 +45,7 @@ final class ComponentExpression {
 			'/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*$/D',
 			$source_path
 		);
-		$is_literal      = in_array( strtolower( $source_path ), array( 'true', 'false', 'null', 'infinity' ), true );
+		$is_literal      = in_array( strtolower( $source_path ), array( 'true', 'false', 'null', 'nan', 'infinity', 'undefined' ), true );
 		$is_runtime      = str_starts_with( $source_path, 'rt-' );
 
 		if ( ! $is_simple_path || $is_literal || $is_runtime ) {

@@ -250,16 +250,6 @@ final class ComponentBlock implements EtchBlockBuilderInterface {
 	}
 
 	/**
-	 * Set an expression component prop.
-	 *
-	 * @param string $key Prop key.
-	 * @param string $expression Expression without surrounding braces.
-	 */
-	public function prop_expression( string $key, string $expression ): self {
-		return $this->set_prop_value( $key, ComponentPropValueEncoder::expression( $expression ) );
-	}
-
-	/**
 	 * Set a raw component prop string.
 	 *
 	 * @param string $key Prop key.

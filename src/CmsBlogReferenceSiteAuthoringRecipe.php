@@ -9,14 +9,19 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders;
 
+use HonestlyDesign\EtchBuilders\Contracts\SiteRuntimeCapabilitiesInterface;
 use HonestlyDesign\EtchBuilders\EtchBlocks\CoreBlock;
 use HonestlyDesign\EtchBuilders\EtchBlocks\TextBlock;
 
 /**
- * Declares a real WordPress post-type prerequisite. In a pure package process
- * it stays explicitly skipped until a host supplies the required runtime evidence.
+ * Declares a real WordPress post-type prerequisite. Without a runtime that
+ * supplies the post type it stays explicitly skipped; with one it compiles a
+ * complete plan that must match the exact projection below.
  */
 final class CmsBlogReferenceSiteAuthoringRecipe extends AbstractAuthoringCompositeRecipe {
+
+	public function __construct( private readonly ?SiteRuntimeCapabilitiesInterface $runtime = null ) {
+	}
 
 	public function id(): string {
 		return 'recipe.reference.cms-blog';
@@ -48,6 +53,10 @@ final class CmsBlogReferenceSiteAuthoringRecipe extends AbstractAuthoringComposi
 		);
 	}
 
+	protected function runtime(): ?SiteRuntimeCapabilitiesInterface {
+		return $this->runtime;
+	}
+
 	protected function build(): SiteDefinition {
 		$pattern = Pattern::new( 'Blog Intro', 'Blog intro pattern' )
 			->key( 'BlogIntro' )
@@ -66,10 +75,89 @@ final class CmsBlogReferenceSiteAuthoringRecipe extends AbstractAuthoringComposi
 	}
 
 	protected function is_available(): bool {
-		return false;
+		return null !== $this->runtime && true === $this->runtime->post_type_exists( 'post' );
 	}
 
 	public function expected_outcome(): AuthoringCompositeRecipeExpectation {
-		return AuthoringCompositeRecipeExpectation::skipped( 'WordPress post-type runtime is not installed in the pure package execution context.' );
+		if ( $this->is_available() ) {
+			return AuthoringCompositeRecipeExpectation::for_plan(
+				AuthoringRecipeExpectation::for_plan(
+					array(
+						'entities' => array(
+							array(
+								'type' => 'component',
+								'identity' => 'component:Hero',
+								'payload' => array(
+									'name' => 'Hero',
+									'description' => 'Hero component',
+									'blocks' => '<!-- wp:etch/element {"tag":"section","attributes":[]} --><!-- wp:etch/text {"content":"Welcome to the site."} /--><!-- /wp:etch/element -->',
+									'properties' => array(),
+								),
+							),
+							array(
+								'type' => 'pattern',
+								'identity' => 'pattern:BlogIntro',
+								'payload' => array(
+									'name' => 'Blog Intro',
+									'description' => 'Blog intro pattern',
+									'blocks' => '<!-- wp:etch/text {"content":"Latest articles"} /-->',
+									'categories' => array(),
+								),
+							),
+							array(
+								'type' => 'page',
+								'identity' => 'page:slug:journal',
+								'payload' => array(
+									'blocks' => '<!-- wp:etch/text {"content":"Latest articles"} /-->',
+									'slug' => 'journal',
+								),
+							),
+							array(
+								'type' => 'post',
+								'identity' => 'post:post:hello-world',
+								'payload' => array(
+									'blocks' => '<!-- wp:etch/text {"content":"Article content"} /-->',
+									'slug' => 'hello-world',
+									'post_type' => 'post',
+									'post_title' => 'Hello World',
+								),
+							),
+							array(
+								'type' => 'template',
+								'identity' => 'template:slug:single',
+								'payload' => array(
+									'blocks' => '<!-- wp:post-content {"align":"full","layout":{"type":"default"}} /-->',
+									'slug' => 'single',
+								),
+							),
+						),
+						'identities' => array(
+							'component:Hero',
+							'pattern:BlogIntro',
+							'page:slug:journal',
+							'post:post:hello-world',
+							'template:slug:single',
+						),
+						'dependencies' => array(
+							array(
+								'consumer' => 'page:slug:journal',
+								'dependency' => 'pattern:BlogIntro',
+								'kind' => 'pattern',
+							),
+						),
+						'styles' => array(),
+						'assets' => array(),
+						'ownership' => array(),
+						'diagnostics' => array(),
+						'home_page' => array(
+							'mode' => 'page',
+							'slug' => 'journal',
+						),
+					)
+				)
+			);
+		}
+
+		return AuthoringCompositeRecipeExpectation::skipped( 'Optional product prerequisites are unavailable: wordpress.post-type.post.' );
 	}
 }
