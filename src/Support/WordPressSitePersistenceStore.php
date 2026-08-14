@@ -15,6 +15,7 @@ use HonestlyDesign\EtchBuilders\CompiledSiteOwnership;
 use HonestlyDesign\EtchBuilders\CompiledSitePlan;
 use HonestlyDesign\EtchBuilders\CompiledSiteResource;
 use HonestlyDesign\EtchBuilders\CompiledSiteResourceType;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceApplyLockInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceResourceStoreInterface;
 use HonestlyDesign\EtchBuilders\RegistrationResult;
 use HonestlyDesign\EtchBuilders\SiteHomePolicy;
@@ -29,11 +30,19 @@ use Throwable;
  * adapter keeps builder ownership and snapshots beside native WordPress data
  * so native records remain inspectable by Etch and other WordPress tooling.
  */
-final class WordPressSitePersistenceStore implements SitePersistenceResourceStoreInterface {
+final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInterface, SitePersistenceResourceStoreInterface {
 
 	private const OPTION_PREFIX = 'etch_builders_site_record_';
 
 	private const CLAIM_PREFIX = 'etch_builders_site_claim_';
+
+	private const APPLY_LOCK_OPTION = 'etch_builders_site_apply_lock';
+
+	/**
+	 * Claims abandoned by a crashed apply become stealable after this window.
+	 * Applies are serialized per site, so an older claim cannot be live.
+	 */
+	private const CLAIM_TTL_SECONDS = 900;
 
 	private const BLOCK_POST_TYPE = 'wp_block';
 
@@ -282,7 +291,7 @@ final class WordPressSitePersistenceStore implements SitePersistenceResourceStor
 
 		if ( ! $update ) {
 			$claim_name = $this->claim_option_name( $record->identity() );
-			if ( ! \add_option( $claim_name, self::OWNER_VALUE, '', false ) ) {
+			if ( ! $this->acquire_claim( $claim_name ) ) {
 				return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_CONFLICT', 'A concurrent Site persistence claim already exists for this identity.' );
 			}
 
@@ -1021,14 +1030,25 @@ final class WordPressSitePersistenceStore implements SitePersistenceResourceStor
 		}
 
 		$state = $this->build_stylesheet_state( $records, $stylesheets, $stylesheet_id );
-		if ( ! $this->update_option_if_changed( self::BUILDER_STYLESHEET_FRAGMENTS_OPTION, \get_option( self::BUILDER_STYLESHEET_FRAGMENTS_OPTION, array() ), $state['fragments'] ) ) {
-			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not update the compiled stylesheet fragment ownership map.' );
-		}
-		if ( ! $this->update_option_if_changed( self::GLOBAL_STYLESHEETS_OPTION, $stylesheets, $state['stylesheets'] ) ) {
-			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not update the native Etch global stylesheet option.' );
-		}
-		if ( ! $this->update_option_if_changed( self::BUILDER_STYLESHEET_HASHES_OPTION, \get_option( self::BUILDER_STYLESHEET_HASHES_OPTION, array() ), $state['hashes'] ) ) {
-			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not update the compiled stylesheet ownership hash map.' );
+		$failed = $this->update_options_atomically( array(
+			array(
+				'option' => self::BUILDER_STYLESHEET_FRAGMENTS_OPTION,
+				'before' => \get_option( self::BUILDER_STYLESHEET_FRAGMENTS_OPTION, array() ),
+				'after'  => $state['fragments'],
+			),
+			array(
+				'option' => self::GLOBAL_STYLESHEETS_OPTION,
+				'before' => $stylesheets,
+				'after'  => $state['stylesheets'],
+			),
+			array(
+				'option' => self::BUILDER_STYLESHEET_HASHES_OPTION,
+				'before' => \get_option( self::BUILDER_STYLESHEET_HASHES_OPTION, array() ),
+				'after'  => $state['hashes'],
+			),
+		) );
+		if ( null !== $failed ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', sprintf( 'WordPress could not update "%s" for the compiled stylesheet; prior writes were rolled back.', $failed ) );
 		}
 
 		return $this->store_resource_snapshot( $record, $records );
@@ -1112,14 +1132,25 @@ final class WordPressSitePersistenceStore implements SitePersistenceResourceStor
 			unset( $next_hashes[ $id ] );
 		}
 
-		if ( ! $this->update_option_if_changed( self::BUILDER_STYLESHEET_FRAGMENTS_OPTION, $current_fragments, $next_fragments ) ) {
-			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not remove the exact recorded stylesheet fragment.' );
-		}
-		if ( ! $this->update_option_if_changed( self::GLOBAL_STYLESHEETS_OPTION, $stylesheets, $next_stylesheets ) ) {
-			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not update the native stylesheet after orphan cleanup.' );
-		}
-		if ( ! $this->update_option_if_changed( self::BUILDER_STYLESHEET_HASHES_OPTION, $hashes, $next_hashes ) ) {
-			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not update stylesheet ownership after orphan cleanup.' );
+		$failed = $this->update_options_atomically( array(
+			array(
+				'option' => self::BUILDER_STYLESHEET_FRAGMENTS_OPTION,
+				'before' => $current_fragments,
+				'after'  => $next_fragments,
+			),
+			array(
+				'option' => self::GLOBAL_STYLESHEETS_OPTION,
+				'before' => $stylesheets,
+				'after'  => $next_stylesheets,
+			),
+			array(
+				'option' => self::BUILDER_STYLESHEET_HASHES_OPTION,
+				'before' => $hashes,
+				'after'  => $next_hashes,
+			),
+		) );
+		if ( null !== $failed ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', sprintf( 'WordPress could not update "%s" during stylesheet orphan cleanup; prior writes were rolled back.', $failed ) );
 		}
 
 		return $this->remove_resource_snapshot( $record->identity() );
@@ -1204,7 +1235,7 @@ final class WordPressSitePersistenceStore implements SitePersistenceResourceStor
 
 		$option_key     = (string) array_key_first( $matches );
 		$native_payload = $matches[ $option_key ];
-		unset( $native_payload['_omide_builder_hash'], $native_payload['_preset_hash'] );
+		$native_payload = $this->without_runtime_private_keys( $native_payload );
 		$native_payload['id'] = $option_key;
 		$stored = $this->stored_entity( $identity );
 		try {
@@ -1215,6 +1246,26 @@ final class WordPressSitePersistenceStore implements SitePersistenceResourceStor
 		}
 
 		return null !== $stored && $stored->is_owned() && $stored->fingerprint() === $current->fingerprint() ? $stored : $current;
+	}
+
+	/**
+	 * Drop runtime-private top-level keys from a native Etch payload.
+	 *
+	 * The Etch runtime may add its own underscore-prefixed bookkeeping keys to
+	 * persisted loop payloads; only the non-private contract keys participate
+	 * in ownership fingerprints, so runtime upgrades cannot cause false drift.
+	 *
+	 * @param array<string, mixed> $payload
+	 * @return array<string, mixed>
+	 */
+	private function without_runtime_private_keys( array $payload ): array {
+		foreach ( array_keys( $payload ) as $key ) {
+			if ( is_string( $key ) && str_starts_with( $key, '_' ) ) {
+				unset( $payload[ $key ] );
+			}
+		}
+
+		return $payload;
 	}
 
 	private function persist_loop_preset( SitePersistenceRecord $record, bool $update ): RegistrationResult {
@@ -1524,6 +1575,32 @@ final class WordPressSitePersistenceStore implements SitePersistenceResourceStor
 		return true;
 	}
 
+	/**
+	 * Apply sequential option writes as one rollback-safe group: when a later
+	 * write fails, every already-applied write is restored to its prior value.
+	 *
+	 * @param array<int, array{option: string, before: mixed, after: mixed}> $writes
+	 * @return string|null The option whose write failed, or null when all writes succeeded.
+	 */
+	private function update_options_atomically( array $writes ): ?string {
+		$applied = array();
+		foreach ( $writes as $write ) {
+			if ( ! $this->update_option_if_changed( $write['option'], $write['before'], $write['after'] ) ) {
+				foreach ( array_reverse( $applied ) as $restore ) {
+					\update_option( $restore['option'], $restore['before'], true );
+				}
+
+				return $write['option'];
+			}
+
+			if ( $write['before'] !== $write['after'] ) {
+				$applied[] = $write;
+			}
+		}
+
+		return null;
+	}
+
 	private function payload_hash( array $payload ): string {
 		$encoded = json_encode( $payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION );
 		return hash( 'sha256', false === $encoded ? serialize( $payload ) : $encoded );
@@ -1555,8 +1632,74 @@ final class WordPressSitePersistenceStore implements SitePersistenceResourceStor
 		return self::OPTION_PREFIX . hash( 'sha256', $identity );
 	}
 
+	/** {@inheritdoc} */
+	public function acquire_site_apply_lock(): bool {
+		return $this->acquire_claim( self::APPLY_LOCK_OPTION );
+	}
+
+	/** {@inheritdoc} */
+	public function release_site_apply_lock(): bool {
+		if ( ! \function_exists( 'delete_option' ) || ! \function_exists( 'get_option' ) ) {
+			return false;
+		}
+
+		if ( \delete_option( self::APPLY_LOCK_OPTION ) ) {
+			return true;
+		}
+
+		return null === \get_option( self::APPLY_LOCK_OPTION, null );
+	}
+
 	private function claim_option_name( string $identity ): string {
 		return self::CLAIM_PREFIX . hash( 'sha256', $identity );
+	}
+
+	/**
+	 * Atomically claim one lock option, stealing claims abandoned by a crashed
+	 * apply once they are older than the TTL. A claim without a timestamp is a
+	 * leftover from a pre-2.0.1 crash: applies are serialized per site, so it
+	 * cannot belong to a live process.
+	 */
+	private function acquire_claim( string $option ): bool {
+		if ( ! \function_exists( 'add_option' ) || ! \function_exists( 'get_option' ) || ! \function_exists( 'delete_option' ) ) {
+			return false;
+		}
+
+		if ( \add_option( $option, $this->claim_stamp(), '', false ) ) {
+			return true;
+		}
+
+		if ( ! $this->claim_is_stale( \get_option( $option, null ) ) ) {
+			return false;
+		}
+
+		if ( ! \delete_option( $option ) ) {
+			return false;
+		}
+
+		return \add_option( $option, $this->claim_stamp(), '', false );
+	}
+
+	private function claim_stamp(): string {
+		return self::OWNER_VALUE . ':' . time();
+	}
+
+	private function claim_is_stale( mixed $existing ): bool {
+		if ( ! is_string( $existing ) ) {
+			return false;
+		}
+
+		if ( self::OWNER_VALUE === $existing ) {
+			return true;
+		}
+
+		$prefix = self::OWNER_VALUE . ':';
+		if ( ! str_starts_with( $existing, $prefix ) ) {
+			return false;
+		}
+
+		$claimed_at = (int) substr( $existing, strlen( $prefix ) );
+		return $claimed_at > 0 && ( time() - $claimed_at ) > self::CLAIM_TTL_SECONDS;
 	}
 
 	private function release_claim( string $claim_name ): bool {
