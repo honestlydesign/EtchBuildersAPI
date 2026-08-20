@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders;
 
+use HonestlyDesign\EtchBuilders\ComponentContracts\ComponentContract;
 use HonestlyDesign\EtchBuilders\ComponentProperties\ComponentClassPropertyGuard;
 use HonestlyDesign\EtchBuilders\Contracts\SiteRuntimeCapabilitiesInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SiteEntityCompilerMetadataInterface;
@@ -433,6 +434,7 @@ final class SiteCompiler {
 				$identity
 			);
 			self::validate_serialized_loops( $identity, $blocks, $dependencies, $diagnostics, $loop_keys );
+			self::validate_serialized_component_slots( $identity, $blocks, $diagnostics, $allow_component_root_slot_placeholder );
 		}
 
 		if ( null === $sequence && function_exists( 'parse_blocks' ) && '' !== trim( $blocks ) ) {
@@ -456,7 +458,7 @@ final class SiteCompiler {
 	 * @param array<int, CompiledSiteDiagnostic> $diagnostics
 	 * @param array<string, true>                $loop_keys
 	 */
-	private static function validate_typed_blocks( string $identity, array $blocks, array &$dependencies, array &$diagnostics, array $loop_keys, int $depth = 0, bool $allow_component_root_slot_placeholder = false ): void {
+	private static function validate_typed_blocks( string $identity, array $blocks, array &$dependencies, array &$diagnostics, array $loop_keys, int $depth = 0, bool $allow_component_root_slot_placeholder = false, bool $direct_child_of_component = false ): void {
 		foreach ( $blocks as $block ) {
 			if ( ! $block instanceof Block ) {
 				$diagnostics[] = self::error( self::SERIALIZATION_FAILED, 'Typed block sequences may contain only Block values.', $identity );
@@ -472,13 +474,19 @@ final class SiteCompiler {
 					} else {
 						self::append_unique_dependency( $dependencies, CompiledSiteDependency::loop( $identity, $loop_id ) );
 					}
+				} elseif ( null === self::normalized_wire_string( $attributes['target'] ?? null ) ) {
+					$diagnostics[] = self::error( self::LOOP_INVALID, self::targetless_loop_message(), $identity );
 				}
+			}
+
+			if ( 'etch/slot-content' === $block->name() && ! $direct_child_of_component ) {
+				$diagnostics[] = self::error( self::COMPONENT_CONTRACT_INVALID, 'Slot content must be a direct child of an etch/component instance; Etch only extracts direct slot children and ignores the slot name anywhere else.', $identity );
 			}
 
 			$root_slot_placeholder_allowed = $allow_component_root_slot_placeholder
 				&& 0 === $depth
 				&& 'etch/slot-placeholder' === $block->name();
-			if ( ( 'etch/slot-content' === $block->name() || 'etch/slot-placeholder' === $block->name() ) && 0 === $depth && ! $root_slot_placeholder_allowed ) {
+			if ( 'etch/slot-placeholder' === $block->name() && 0 === $depth && ! $root_slot_placeholder_allowed ) {
 				$diagnostics[] = self::error( self::COMPONENT_CONTRACT_INVALID, 'Slot boundary blocks must be emitted inside a component instance, not at the Site Entity root.', $identity );
 			}
 
@@ -507,15 +515,19 @@ final class SiteCompiler {
 				}
 			}
 
-			self::validate_typed_blocks( $identity, $block->children(), $dependencies, $diagnostics, $loop_keys, $depth + 1, $allow_component_root_slot_placeholder );
+			self::validate_typed_blocks( $identity, $block->children(), $dependencies, $diagnostics, $loop_keys, $depth + 1, $allow_component_root_slot_placeholder, 'etch/component' === $block->name() );
 		}
 	}
 
 	/**
 	 * Validate loop references retained by a legacy serialized markup boundary.
 	 *
-	 * This deliberately checks only the loop comment contract. The rest of a
-	 * raw payload remains an explicit escape and receives ESCAPE_REVIEW above.
+	 * The rule mirrors Etch's runtime loop resolution exactly: a non-blank
+	 * loopId must reference a loop preset registered in the Site Definition
+	 * (the runtime silently renders such loops empty), while a loop without a
+	 * loopId resolves its items purely from the target expression against the
+	 * render-time context, so only the presence of a non-empty target is
+	 * statically knowable and required.
 	 *
 	 * @param array<int, CompiledSiteDependency> $dependencies
 	 * @param array<int, CompiledSiteDiagnostic> $diagnostics
@@ -535,18 +547,201 @@ final class SiteCompiler {
 		foreach ( $matches as $match ) {
 			$attributes_json = isset( $match[1] ) ? trim( $match[1] ) : '';
 			$attributes      = '' === $attributes_json ? null : json_decode( $attributes_json, true );
-			$loop_id         = is_array( $attributes ) ? ( $attributes['loopId'] ?? null ) : null;
+			$loop_id         = self::normalized_wire_string( is_array( $attributes ) ? ( $attributes['loopId'] ?? null ) : null );
 
-			if ( ! is_string( $loop_id ) || '' === trim( $loop_id ) || ! isset( $loop_keys[ $loop_id ] ) ) {
-				$diagnostics[] = self::error(
-					self::LOOP_INVALID,
-					sprintf( 'Loop reference "%s" is not registered in the Site Definition.', is_scalar( $loop_id ) ? (string) $loop_id : ( null === $loop_id ? 'missing' : gettype( $loop_id ) ) ),
-					$identity
-				);
+			if ( null !== $loop_id ) {
+				if ( ! isset( $loop_keys[ $loop_id ] ) ) {
+					$diagnostics[] = self::error(
+						self::LOOP_INVALID,
+						sprintf( 'Loop reference "%s" is not registered in the Site Definition.', $loop_id ),
+						$identity
+					);
+					continue;
+				}
+
+				self::append_unique_dependency( $dependencies, CompiledSiteDependency::loop( $identity, $loop_id ) );
 				continue;
 			}
 
-			self::append_unique_dependency( $dependencies, CompiledSiteDependency::loop( $identity, $loop_id ) );
+			if ( null === self::normalized_wire_string( is_array( $attributes ) ? ( $attributes['target'] ?? null ) : null ) ) {
+				$diagnostics[] = self::error(
+					self::LOOP_INVALID,
+					self::targetless_loop_message(),
+					$identity
+				);
+			}
+		}
+	}
+
+	/**
+	 * Mirror LoopAttributes::from_array(): only a non-blank string carries a
+	 * value on the wire; every other shape falls back to target resolution.
+	 */
+	private static function normalized_wire_string( mixed $raw ): ?string {
+		return is_string( $raw ) && '' !== trim( $raw ) ? $raw : null;
+	}
+
+	private static function targetless_loop_message(): string {
+		return 'etch/loop without a loop preset id must declare a non-empty target expression; Etch resolves such a loop to an empty item set at render time.';
+	}
+
+	/**
+	 * Validate slot-content boundaries retained by a serialized markup
+	 * boundary against the exact contracts of the etch/component instances
+	 * that own them.
+	 *
+	 * Etch extracts only slot-content blocks that are direct children of an
+	 * etch/component instance, keeps the first assignment per slot name, and
+	 * matches names exactly against the component's declared slot
+	 * placeholders, so any other placement or name is reported here instead
+	 * of silently dropping the authoring intent at render time.
+	 *
+	 * @param array<int, CompiledSiteDiagnostic> $diagnostics
+	 */
+	private static function validate_serialized_component_slots( string $identity, string $blocks, array &$diagnostics, bool $allow_component_root_slot_placeholder ): void {
+		self::walk_serialized_slots(
+			$identity,
+			self::parse_serialized_wire( $blocks ),
+			null,
+			false,
+			0,
+			$allow_component_root_slot_placeholder,
+			$diagnostics
+		);
+	}
+
+	/**
+	 * Parse the serialized block-comment wire into a nested block tree.
+	 *
+	 * This mirrors the subset of the WordPress block grammar the serialized
+	 * boundary emits (wp:name plus optional JSON attributes, self-closing or
+	 * paired), so validation does not depend on a WordPress parse_blocks()
+	 * being present in the process.
+	 *
+	 * @return array<int, object{blockName: string, attrs: array<string, mixed>, innerBlocks: array<int, object{blockName: string, attrs: array<string, mixed>, innerBlocks: array<int, mixed>}>}>
+	 */
+	private static function parse_serialized_wire( string $blocks ): array {
+		$root    = (object) array( 'innerBlocks' => array() );
+		$stack   = array( $root );
+		$pattern = '/<!--\\s+wp:([a-z][a-z0-9\\-\\/]*)(\\s+(\\{.*?\\}))?\\s*(\\/)?-->|(<!--\\s+\\/wp:([a-z][a-z0-9\\-\\/]*)\\s+-->)/s';
+		$offset  = 0;
+
+		while ( preg_match( $pattern, $blocks, $match, PREG_OFFSET_CAPTURE, $offset ) ) {
+			$position = $match[0][1];
+			$offset   = $position + strlen( $match[0][0] );
+
+			if ( isset( $match[6][0] ) && '' !== $match[6][0] ) {
+				if ( 1 < count( $stack ) ) {
+					array_pop( $stack );
+				}
+				continue;
+			}
+
+			$attributes_json = isset( $match[3][0] ) ? (string) $match[3][0] : '';
+			$attributes      = '' !== trim( $attributes_json ) ? json_decode( $attributes_json, true ) : array();
+			$node            = (object) array(
+				'blockName'   => isset( $match[1][0] ) ? (string) $match[1][0] : '',
+				'attrs'       => is_array( $attributes ) ? $attributes : array(),
+				'innerBlocks' => array(),
+			);
+
+			$stack[ count( $stack ) - 1 ]->innerBlocks[] = $node;
+
+			$self_closing = isset( $match[4][0] ) && '' !== $match[4][0];
+			if ( ! $self_closing ) {
+				$stack[] = $node;
+			}
+		}
+
+		return $root->innerBlocks;
+	}
+
+	/**
+	 * Walk one level of the serialized wire tree and validate slot boundaries.
+	 *
+	 * @param array<int, object{blockName: string, attrs: array<string, mixed>, innerBlocks: array<int, mixed>}> $blocks Direct children of one parent block.
+	 * @param ComponentContract|null                                                                            $owner_contract Contract of the innermost enclosing component instance when this level holds its direct children.
+	 * @param bool                                                                                              $owner_is_component Whether the parent block is an etch/component instance, even when its contract cannot be resolved.
+	 * @param array<int, CompiledSiteDiagnostic>                                                                $diagnostics
+	 */
+	private static function walk_serialized_slots( string $identity, array $blocks, ?ComponentContract $owner_contract, bool $owner_is_component, int $depth, bool $allow_component_root_slot_placeholder, array &$diagnostics ): void {
+		$seen_slot_names = array();
+
+		foreach ( $blocks as $block ) {
+			if ( 'etch/slot-content' === $block->blockName ) {
+				if ( ! $owner_is_component ) {
+					$diagnostics[] = self::error( self::COMPONENT_CONTRACT_INVALID, 'Slot content must be a direct child of an etch/component instance; Etch only extracts direct slot children and ignores the slot name anywhere else.', $identity );
+				} elseif ( null !== $owner_contract ) {
+					$slot_name = self::normalized_wire_string( $block->attrs['name'] ?? null );
+					if ( null === $slot_name ) {
+						$diagnostics[] = self::error( self::COMPONENT_CONTRACT_INVALID, sprintf( 'Component "%s" has a slot-content block without a slot name; Etch skips empty slot names.', $owner_contract->component_key() ), $identity );
+					} elseif ( isset( $seen_slot_names[ $slot_name ] ) ) {
+						$diagnostics[] = self::error( self::COMPONENT_CONTRACT_INVALID, sprintf( 'Component "%s" slot "%s" is filled more than once; Etch keeps only the first slot-content block per name.', $owner_contract->component_key(), $slot_name ), $identity );
+					} elseif ( ! in_array( $slot_name, $owner_contract->slots(), true ) ) {
+						$declared      = $owner_contract->slots();
+						$diagnostics[] = self::error(
+							self::COMPONENT_CONTRACT_INVALID,
+							sprintf(
+								'Component "%s" has no exact slot named "%s".%s',
+								$owner_contract->component_key(),
+								$slot_name,
+								array() === $declared ? '' : ' Declared slots: ' . implode( ', ', $declared ) . '.'
+							),
+							$identity
+						);
+					} else {
+						$seen_slot_names[ $slot_name ] = true;
+					}
+				}
+			} elseif ( 'etch/slot-placeholder' === $block->blockName && 0 === $depth && ! $allow_component_root_slot_placeholder ) {
+				$diagnostics[] = self::error( self::COMPONENT_CONTRACT_INVALID, 'Slot boundary blocks must be emitted inside a component instance, not at the Site Entity root.', $identity );
+			}
+
+			$is_component = 'etch/component' === $block->blockName;
+			if ( array() !== $block->innerBlocks ) {
+				self::walk_serialized_slots(
+					$identity,
+					$block->innerBlocks,
+					$is_component ? self::serialized_component_contract( $block->attrs ) : null,
+					$is_component,
+					$depth + 1,
+					$allow_component_root_slot_placeholder,
+					$diagnostics
+				);
+			}
+		}
+	}
+
+	/**
+	 * Resolve the exact Component Contract of a serialized etch/component
+	 * instance.
+	 *
+	 * Returns null when the ref cannot be resolved to an exact contract. The
+	 * Rule G component guard owns reporting malformed refs and missing
+	 * contracts, so slot-name checks are simply skipped for such instances.
+	 *
+	 * @param array<string, mixed> $attrs
+	 */
+	private static function serialized_component_contract( array $attrs ): ?ComponentContract {
+		$ref = $attrs['ref'] ?? null;
+		if ( ! is_int( $ref ) || $ref <= 0 ) {
+			return null;
+		}
+
+		try {
+			$component_key = Environment::ref_resolver()->key_by_ref( $ref );
+		} catch ( Throwable $throwable ) {
+			return null;
+		}
+
+		if ( ! is_string( $component_key ) || '' === $component_key ) {
+			return null;
+		}
+
+		try {
+			return Environment::component_contracts()->catalog()->contract( $component_key );
+		} catch ( Throwable $throwable ) {
+			return null;
 		}
 	}
 

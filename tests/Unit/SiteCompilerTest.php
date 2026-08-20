@@ -322,6 +322,195 @@ final class SiteCompilerTest extends TestCase {
 		self::assertSame( array(), $plan->dependencies() );
 	}
 
+	public function test_raw_parent_scoped_nested_loop_target_compiles_without_a_preset_reference(): void {
+		$loop = LoopPreset::new( 'Recent Posts' )->key( 'recent-posts' )->main_query();
+		$page = Page::new();
+		$slug = new \ReflectionProperty( Page::class, 'slug' );
+		$slug->setValue( $page, 'home' );
+		$page->blocks_markup(
+			'<!-- wp:etch/loop {"loopId":"recent-posts","itemId":"item"} --><!-- wp:etch/loop {"target":"item.children","itemId":"child"} /--><!-- /wp:etch/loop -->'
+		);
+
+		$plan = SiteDefinition::new()->page( $page )->supporting( $loop )->compile();
+
+		self::assertFalse( $plan->has_errors() );
+		self::assertSame(
+			array( 'page:slug:home>loop_preset:recent-posts:loop' ),
+			array_map(
+				static fn ( $dependency ): string => $dependency->consumer_identity() . '>' . $dependency->dependency_identity() . ':' . $dependency->kind(),
+				$plan->dependencies()
+			)
+		);
+	}
+
+	public function test_raw_loop_without_preset_id_or_target_is_rejected(): void {
+		$page = Page::new();
+		$slug = new \ReflectionProperty( Page::class, 'slug' );
+		$slug->setValue( $page, 'home' );
+		$page->blocks_markup(
+			'<!-- wp:etch/loop /--><!-- wp:etch/loop {"loopId":"  "} /--><!-- wp:etch/loop {"target":"  "} /-->'
+		);
+
+		$plan = SiteDefinition::new()->page( $page )->compile();
+
+		self::assertTrue( $plan->has_errors() );
+		self::assertCount(
+			3,
+			array_filter(
+				$plan->diagnostics(),
+				static fn ( $diagnostic ): bool => 'ETCH_SITE_LOOP_INVALID' === $diagnostic->code()
+			)
+		);
+	}
+
+	public function test_raw_loop_with_non_string_preset_id_falls_back_to_target_resolution(): void {
+		$page = Page::new();
+		$slug = new \ReflectionProperty( Page::class, 'slug' );
+		$slug->setValue( $page, 'home' );
+		$page->blocks_markup( '<!-- wp:etch/loop {"loopId":123,"target":"item.children"} /-->' );
+
+		$plan = SiteDefinition::new()->page( $page )->compile();
+
+		self::assertFalse( $plan->has_errors() );
+		self::assertSame( array(), $plan->dependencies() );
+	}
+
+	public function test_typed_loop_without_preset_id_or_target_is_rejected(): void {
+		$page = $this->typed_page( 'home' )->blocks_sequence(
+			BlockSequence::new()->append(
+				\HonestlyDesign\EtchBuilders\Block::new( 'loop', array( 'target' => '' ) )
+			)
+		);
+
+		$plan = SiteDefinition::new()->page( $page )->compile();
+
+		self::assertTrue( $plan->has_errors() );
+		self::assertSame( 'ETCH_SITE_LOOP_INVALID', $plan->diagnostics()[0]->code() );
+	}
+
+	public function test_serialized_slot_content_is_checked_against_exact_component_contracts(): void {
+		$this->configure_serialized_slot_contracts( array( 'OuterCard' => array( 'media' ), 'InnerCard' => array( 'body' ) ) );
+
+		$outer_ref = max( 1, abs( crc32( 'OuterCard' ) ) );
+		$inner_ref = max( 1, abs( crc32( 'InnerCard' ) ) );
+		$page      = Page::new();
+		$slug      = new \ReflectionProperty( Page::class, 'slug' );
+		$slug->setValue( $page, 'home' );
+		$page->blocks_markup(
+			'<!-- wp:etch/component {"ref":' . $outer_ref . '} -->'
+			. '<!-- wp:etch/slot-content {"name":"media"} -->'
+			. '<!-- wp:etch/component {"ref":' . $inner_ref . '} -->'
+			. '<!-- wp:etch/slot-content {"name":"body"} -->Inner<!-- /wp:etch/slot-content -->'
+			. '<!-- /wp:etch/component -->'
+			. '<!-- /wp:etch/slot-content -->'
+			. '<!-- /wp:etch/component -->'
+		);
+
+		$plan = SiteDefinition::new()->page( $page )->compile();
+
+		self::assertFalse( $plan->has_errors() );
+	}
+
+	public function test_serialized_slot_content_mismatches_are_rejected(): void {
+		$this->configure_serialized_slot_contracts( array( 'OuterCard' => array( 'media' ) ) );
+
+		$outer_ref = max( 1, abs( crc32( 'OuterCard' ) ) );
+		$cases     = array(
+			'unknown slot name'        => '<!-- wp:etch/component {"ref":' . $outer_ref . '} --><!-- wp:etch/slot-content {"name":"body"} -->x<!-- /wp:etch/slot-content --><!-- /wp:etch/component -->',
+			'empty slot name'          => '<!-- wp:etch/component {"ref":' . $outer_ref . '} --><!-- wp:etch/slot-content {"name":""} -->x<!-- /wp:etch/slot-content --><!-- /wp:etch/component -->',
+			'duplicate slot name'      => '<!-- wp:etch/component {"ref":' . $outer_ref . '} --><!-- wp:etch/slot-content {"name":"media"} -->x<!-- /wp:etch/slot-content --><!-- wp:etch/slot-content {"name":"media"} -->y<!-- /wp:etch/slot-content --><!-- /wp:etch/component -->',
+			'slot outside a component' => '<!-- wp:etch/slot-content {"name":"media"} -->x<!-- /wp:etch/slot-content -->',
+			'slot deeper than a child' => '<!-- wp:etch/component {"ref":' . $outer_ref . '} --><!-- wp:etch/group --><!-- wp:etch/slot-content {"name":"media"} -->x<!-- /wp:etch/slot-content --><!-- /wp:etch/group --><!-- /wp:etch/component -->',
+		);
+
+		foreach ( $cases as $markup ) {
+			$page = Page::new();
+			$slug = new \ReflectionProperty( Page::class, 'slug' );
+			$slug->setValue( $page, 'home' );
+			$page->blocks_markup( $markup );
+
+			$plan = SiteDefinition::new()->page( $page )->compile();
+
+			self::assertTrue( $plan->has_errors(), $markup );
+			self::assertNotEmpty(
+				array_filter(
+					$plan->diagnostics(),
+					static fn ( $diagnostic ): bool => 'ETCH_SITE_COMPONENT_CONTRACT_INVALID' === $diagnostic->code()
+				),
+				$markup
+			);
+		}
+	}
+
+	public function test_serialized_slot_content_of_unresolvable_component_ref_reports_only_the_ref_error(): void {
+		$this->configure_serialized_slot_contracts( array( 'OuterCard' => array( 'media' ) ) );
+
+		$page = Page::new();
+		$slug = new \ReflectionProperty( Page::class, 'slug' );
+		$slug->setValue( $page, 'home' );
+		$page->blocks_markup(
+			'<!-- wp:etch/component {"ref":999999} --><!-- wp:etch/slot-content {"name":"anything"} -->x<!-- /wp:etch/slot-content --><!-- /wp:etch/component -->'
+		);
+
+		$plan = SiteDefinition::new()->page( $page )->compile();
+
+		self::assertTrue( $plan->has_errors() );
+		self::assertNotEmpty(
+			array_filter(
+				$plan->diagnostics(),
+				static fn ( $diagnostic ): bool => str_contains( $diagnostic->message(), '999999' )
+			)
+		);
+		self::assertSame(
+			array(),
+			array_filter(
+				$plan->diagnostics(),
+				static fn ( $diagnostic ): bool => str_contains( $diagnostic->message(), 'slot' )
+			)
+		);
+	}
+
+	private function configure_serialized_slot_contracts( array $slots_by_key ): void {
+		$contracts = array();
+		foreach ( $slots_by_key as $component_key => $slot_names ) {
+			$contracts[] = \HonestlyDesign\EtchBuilders\ComponentContracts\ComponentContract::from_schema(
+				$component_key,
+				array(),
+				$slot_names
+			);
+		}
+
+		$resolver = new class( $contracts ) implements \HonestlyDesign\EtchBuilders\Contracts\ComponentRefResolverInterface {
+
+			/** @var array<int, string> */
+			private array $keys_by_ref = array();
+
+			public function __construct( array $contracts ) {
+				foreach ( $contracts as $contract ) {
+					$this->keys_by_ref[ max( 1, abs( crc32( $contract->component_key() ) ) ) ] = $contract->component_key();
+				}
+			}
+
+			public function ref_by_key( string $component_key ): int {
+				return max( 1, abs( crc32( $component_key ) ) );
+			}
+
+			public function key_by_ref( int $ref ): ?string {
+				return $this->keys_by_ref[ $ref ] ?? null;
+			}
+		};
+
+		Environment::configure(
+			new \HonestlyDesign\EtchBuilders\Support\NullStorage(),
+			new \HonestlyDesign\EtchBuilders\Support\NullMode(),
+			new \HonestlyDesign\EtchBuilders\Support\NullAssetRegistry(),
+			$resolver,
+			\HonestlyDesign\EtchBuilders\Support\InMemoryComponentContractCatalogProvider::from_catalog(
+				\HonestlyDesign\EtchBuilders\ComponentContracts\ComponentContractCatalog::from_contracts( ...$contracts )
+			)
+		);
+	}
+
 	public function test_compiled_plan_carries_the_explicit_home_page_policy(): void {
 		$plan = SiteDefinition::new()
 			->home_page( SiteHomePolicy::page( 'home' ) )
