@@ -15,6 +15,21 @@ Use this changelog as an end-user document, not a developer log.
 - Only mention breaking changes when they are real and intentional.
 - Keep maintainer-facing work in the `INTERNAL DEV CHANGELOG` section of each release.
 
+## 2.0.4
+
+### FIX
+
+- Nested loops that read their items from the surrounding loop context (for example a dropdown looping `item.children` inside a menu loop) are accepted in serialized markup again. The compiler previously rejected every serialized loop without an explicit loop preset id; it now mirrors Etch's runtime rule exactly: a loop preset id must still be registered in the Site Definition, and a loop without one must declare a non-empty target expression instead of silently rendering empty.
+
+### FEATURE
+
+- Slot filling in serialized markup is now checked against the exact component contract. Etch only extracts slot content that sits directly inside a component instance, keeps the first fill per slot name, and matches names exactly against the component's declared slots — so the compiler now reports unknown slot names, missing names, duplicate fills, and misplaced slot content before apply, instead of letting the intent silently drop at render time. The same placement rule is enforced for typed sequences.
+- Untyped and typed loops now follow one shared rule set: a loop that could never render (no preset id and no target) is reported for both authoring styles.
+
+### ENHANCEMENT
+
+- The test parser used in WordPress-free environments now builds the same nested block tree WordPress returns, so nested component markup is validated identically inside and outside WordPress.
+
 ## 2.0.3
 
 ### FIX
