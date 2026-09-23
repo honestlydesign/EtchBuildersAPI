@@ -111,6 +111,7 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 *
 	 * @param string $title Post title.
 	 * @throws InvalidArgumentException When title is empty.
+	 * @authoring-contract-version 1.0
 	 */
 	public function title( string $title ): static {
 		$title = trim( $title );
@@ -129,6 +130,7 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 *
 	 * @param string $status Post status.
 	 * @throws InvalidArgumentException When status is not allowed.
+	 * @authoring-contract-version 1.0
 	 */
 	public function status( string $status ): static {
 		if ( ! in_array( $status, self::ALLOWED_STATUSES, true ) ) {
@@ -144,6 +146,7 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 * Set builder-owned excerpt.
 	 *
 	 * @param string $excerpt Post excerpt. Empty string clears excerpt on overwrite.
+	 * @authoring-contract-version 1.0
 	 */
 	public function excerpt( string $excerpt ): static {
 		$this->excerpt           = trim( $excerpt );
@@ -156,6 +159,7 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 * Append a structured content block.
 	 *
 	 * @param Block|EtchBlockBuilderInterface $block Block or block builder.
+	 * @authoring-contract-version 1.0
 	 */
 	public function block( Block|EtchBlockBuilderInterface $block ): static {
 		$this->content->block( $block );
@@ -170,6 +174,7 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 * callers do not need to concatenate serialized block strings.
 	 *
 	 * @param BlockSequence $sequence Ordered typed blocks.
+	 * @authoring-contract-version 1.0
 	 */
 	public function blocks_sequence( BlockSequence $sequence ): static {
 		$this->content->sequence( $sequence );
@@ -179,6 +184,7 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 
 	/**
 	 * Append one registered Pattern Use without copying serialized markup.
+	 * @authoring-contract-version 1.0
 	 */
 	public function pattern_use( PatternUse $pattern_use ): static {
 		$this->content->pattern_use( $pattern_use );
@@ -190,6 +196,7 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 * Set serialized block markup.
 	 *
 	 * @param string $markup Serialized markup.
+	 * @authoring-contract-version 1.0
 	 */
 	public function blocks_markup( string $markup ): static {
 		$this->content->blocks_markup( $markup );
@@ -205,6 +212,7 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 *
 	 * @param string $id Stylesheet ID and display name.
 	 * @param string $file_path CSS file path.
+	 * @authoring-contract-version 1.0
 	 */
 	public function stylesheet( string $id, string $file_path ): static {
 		$this->stylesheet_references[] = StylesheetReference::new( $id, $file_path );
@@ -217,6 +225,7 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 *
 	 * @param Style $style Style builder instance.
 	 * @return string Registered style id.
+	 * @authoring-contract-version 1.0
 	 */
 	public function add_style( Style $style ): string {
 		$style_id          = $style->overwrite_on_register( true )->add();
@@ -228,6 +237,7 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 * Allow replacing existing or edited content.
 	 *
 	 * @param bool $overwrite Whether to overwrite.
+	 * @authoring-contract-version 1.0
 	 */
 	public function overwrite( bool $overwrite = true ): static {
 		$this->overwrite = $overwrite;
@@ -242,6 +252,7 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 * when not running in development mode.
 	 *
 	 * @param bool $dev_only Whether this content is dev-only.
+	 * @authoring-contract-version 1.0
 	 */
 	public function dev_only( bool $dev_only = true ): static {
 		$this->dev_only = $dev_only;

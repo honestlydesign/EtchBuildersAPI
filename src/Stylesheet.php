@@ -133,6 +133,7 @@ final class Stylesheet {
 
 	/**
 	 * Create a new Stylesheet builder.
+	 * @authoring-contract-version 1.0
 	 */
 	public static function new(): self {
 		return new self();
@@ -240,6 +241,7 @@ final class Stylesheet {
 	 * @param string $file_path CSS file path.
 	 * @throws InvalidArgumentException When the file path is empty.
 	 * @throws RuntimeException When the file cannot be read.
+	 * @authoring-contract-version 1.0
 	 */
 	public function css_file( string $file_path ): self {
 		$file_path = trim( $file_path );
@@ -338,6 +340,7 @@ final class Stylesheet {
 	 * @param array<int, StylesheetReference> $references Stylesheet references.
 	 * @return bool|RegistrationResult
 	 * @throws InvalidArgumentException When owner key is empty.
+	 * @authoring-contract-version 1.0
 	 */
 	public static function register_references( string $owner_key, array $references ): bool|RegistrationResult {
 		$owner_key = trim( $owner_key );

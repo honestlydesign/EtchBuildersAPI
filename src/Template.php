@@ -31,6 +31,7 @@ final class Template extends AbstractContentBuilder {
 
 	/**
 	 * Create a new template builder.
+	 * @authoring-contract-version 1.0
 	 */
 	public static function new(): self {
 		return new self();
@@ -48,6 +49,7 @@ final class Template extends AbstractContentBuilder {
 	 *
 	 * @param string $slug Template slug.
 	 * @throws InvalidArgumentException When slug is empty after sanitization.
+	 * @authoring-contract-version 1.0
 	 */
 	public function slug( string $slug ): self {
 		$slug = SlugIdentityNormalizer::normalize( $slug, 'Template builder' );

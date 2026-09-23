@@ -15,6 +15,17 @@ Use this changelog as an end-user document, not a developer log.
 - Only mention breaking changes when they are real and intentional.
 - Keep maintainer-facing work in the `INTERNAL DEV CHANGELOG` section of each release.
 
+## 2.0.5
+
+### FEATURE
+
+- Agent tools can now query exact, versioned interface facts for pages, posts, templates, patterns, whole-site definitions, entity style sets, and website-level stylesheets. The builders for those lanes now publish the same source-contract annotation as the composition lanes, and a package-owned entity content contract exports the curated source selections for hosts that validate their own runtime contracts. Hosts that have not admitted those lanes keep seeing them as pending, exactly as before.
+
+### INTERNAL DEV CHANGELOG
+
+- Added `@authoring-contract-version 1.0` to the public entry points of `Page`, `Post`, `Template`, `Pattern`, `EntityStyleSet`, `Stylesheet`, and the shared `AbstractContentBuilder` content lifecycle.
+- Added `CoreEntityContentAuthoringContract` (pending capability declarations, exact source symbols, linked recipe evidence, and a generated catalog) mirroring the component composition contract, plus `CoreEntityContentAuthoringContractTest`.
+
 ## 2.0.4
 
 ### FIX

@@ -110,6 +110,7 @@ final class Pattern implements SiteEntityCompilerMetadataInterface {
 	 * @param string $name        Pattern display name.
 	 * @param string $description Pattern description.
 	 * @throws InvalidArgumentException When name or description is invalid.
+	 * @authoring-contract-version 1.0
 	 */
 	public static function new( string $name, string $description ): self {
 		return new self( $name, $description );
@@ -119,6 +120,7 @@ final class Pattern implements SiteEntityCompilerMetadataInterface {
 	 * Set the pattern key.
 	 *
 	 * @param string $key Pattern key (overrides auto-derived key).
+	 * @authoring-contract-version 1.0
 	 */
 	public function key( string $key ): self {
 		$this->key = $this->validate_key( $key );
@@ -129,6 +131,7 @@ final class Pattern implements SiteEntityCompilerMetadataInterface {
 	 * Add a single category.
 	 *
 	 * @param string $category Category name/slug.
+	 * @authoring-contract-version 1.0
 	 */
 	public function category( string $category ): self {
 		$category = trim( $category );
@@ -157,6 +160,7 @@ final class Pattern implements SiteEntityCompilerMetadataInterface {
 	 *
 	 * @param string|Block|EtchBlockBuilderInterface|BlockSequence $blocks Raw markup/path or typed blocks.
 	 * @throws RuntimeException When the local file cannot be read.
+	 * @authoring-contract-version 1.0
 	 */
 	public function blocks( string|Block|EtchBlockBuilderInterface|BlockSequence $blocks ): self {
 		if ( is_string( $blocks ) ) {
@@ -182,6 +186,7 @@ final class Pattern implements SiteEntityCompilerMetadataInterface {
 	 * Append one registered Pattern Use to this Pattern's typed block tree.
 	 *
 	 * @throws InvalidArgumentException When raw serialized blocks were already set.
+	 * @authoring-contract-version 1.0
 	 */
 	public function pattern_use( PatternUse $pattern_use ): self {
 		if ( '' !== trim( $this->blocks ) && null === $this->block_sequence ) {
@@ -304,6 +309,7 @@ final class Pattern implements SiteEntityCompilerMetadataInterface {
 	 *
 	 * @param Style $style Style builder instance.
 	 * @return string Registered style id.
+	 * @authoring-contract-version 1.0
 	 */
 	public function add_style( Style $style ): string {
 		$style_id          = $style->overwrite_on_register( true )->add();
@@ -319,6 +325,7 @@ final class Pattern implements SiteEntityCompilerMetadataInterface {
 	 *
 	 * @param string $id Stylesheet ID and display name.
 	 * @param string $file_path CSS file path.
+	 * @authoring-contract-version 1.0
 	 */
 	public function stylesheet( string $id, string $file_path ): self {
 		$this->stylesheet_references[] = StylesheetReference::new( $id, $file_path );

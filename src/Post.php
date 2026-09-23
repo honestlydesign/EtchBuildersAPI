@@ -47,6 +47,7 @@ final class Post extends AbstractContentBuilder {
 
 	/**
 	 * Create a new post builder.
+	 * @authoring-contract-version 1.0
 	 */
 	public static function new(): self {
 		return new self();
@@ -82,6 +83,7 @@ final class Post extends AbstractContentBuilder {
 	 *
 	 * @param string $post_type Post type slug.
 	 * @throws InvalidArgumentException When post type is invalid or WordPress reports it as unregistered.
+	 * @authoring-contract-version 1.0
 	 */
 	public function post_type( string $post_type ): self {
 		$post_type = Key::sanitize( $post_type );
@@ -108,6 +110,7 @@ final class Post extends AbstractContentBuilder {
 	 *
 	 * @param string $slug Post slug.
 	 * @throws InvalidArgumentException When slug is empty after sanitization.
+	 * @authoring-contract-version 1.0
 	 */
 	public function slug( string $slug ): self {
 		$slug = SlugIdentityNormalizer::normalize( $slug, 'Post builder' );
@@ -126,6 +129,7 @@ final class Post extends AbstractContentBuilder {
 	 *
 	 * @param int $post_id Post ID.
 	 * @throws InvalidArgumentException When post ID is not positive.
+	 * @authoring-contract-version 1.0
 	 */
 	public function id( int $post_id ): self {
 		if ( 0 >= $post_id ) {

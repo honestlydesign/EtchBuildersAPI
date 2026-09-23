@@ -38,6 +38,7 @@ final class Page extends AbstractContentBuilder {
 
 	/**
 	 * Create a new page builder.
+	 * @authoring-contract-version 1.0
 	 */
 	public static function new(): self {
 		return new self();
@@ -62,6 +63,7 @@ final class Page extends AbstractContentBuilder {
 	 *
 	 * @param string $slug Page slug.
 	 * @throws InvalidArgumentException When slug is empty after sanitization.
+	 * @authoring-contract-version 1.0
 	 */
 	public function slug( string $slug ): self {
 		$slug = SlugIdentityNormalizer::normalize( $slug, 'Page builder' );
@@ -80,6 +82,7 @@ final class Page extends AbstractContentBuilder {
 	 *
 	 * @param int $post_id Page post ID.
 	 * @throws InvalidArgumentException When post ID is not positive.
+	 * @authoring-contract-version 1.0
 	 */
 	public function id( int $post_id ): self {
 		if ( 0 >= $post_id ) {

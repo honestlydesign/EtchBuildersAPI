@@ -30,6 +30,7 @@ final class EntityStyleSet {
 
 	/**
 	 * Parse and register one entity-owned CSS file in the request-local Style registry.
+	 * @authoring-contract-version 1.0
 	 */
 	public static function from_file( string $entity_id, string $file_path ): self {
 		$entity_id = self::validate_entity_id( $entity_id );
@@ -75,6 +76,7 @@ final class EntityStyleSet {
 
 	/**
 	 * Issue the opaque Class Style Reference for one exact simple class selector.
+	 * @authoring-contract-version 1.0
 	 */
 	public function class_reference( string $selector ): ClassStyleReference {
 		if (
