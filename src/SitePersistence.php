@@ -13,6 +13,7 @@ use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceApplyLockInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceRecordAdoptionInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceNativeRetirementInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceStylesheetAdoptionInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceResourceStoreInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceStoreInterface;
 use Throwable;
@@ -104,6 +105,8 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		try {
+			$this->adopt_unowned_stylesheet_assets( $records );
+
 			foreach ( $records as $entry ) {
 				$record = $entry['record'];
 				$results[] = CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE === $entry['intent']
@@ -293,6 +296,35 @@ class SitePersistence implements SitePersistenceInterface {
 			$identities,
 			static fn ( string $left, string $right ): int => $positions[ $left ] <=> $positions[ $right ]
 		);
+	}
+
+	/**
+	 * Adopt unowned native global stylesheets before the per-record writes.
+	 *
+	 * One native stylesheet aggregates fragments from several plan records,
+	 * so unowned entries can only be proven Builder-authored with every
+	 * stylesheet record of the plan at hand. Stores without the capability
+	 * keep the fail-closed per-record conflict behavior.
+	 *
+	 * @param array<int, array{record: SitePersistenceRecord, intent: CompiledSiteEntityPersistenceIntent}> $entries
+	 */
+	private function adopt_unowned_stylesheet_assets( array $entries ): void {
+		if ( ! $this->store instanceof SitePersistenceStylesheetAdoptionInterface ) {
+			return;
+		}
+
+		$records = array();
+		foreach ( $entries as $entry ) {
+			$record = $entry['record'];
+			if ( CompiledSiteResourceType::ASSET->value === $record->kind()
+				&& 'stylesheet' === (string) ( $record->payload()['type'] ?? '' ) ) {
+				$records[] = $record;
+			}
+		}
+
+		if ( array() !== $records ) {
+			$this->store->adopt_unowned_stylesheet_records( ...$records );
+		}
 	}
 
 	private function apply_record( SitePersistenceRecord $record ): SitePersistenceResult {

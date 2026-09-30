@@ -19,6 +19,7 @@ use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceApplyLockInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceNativeRetirementInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceRecordAdoptionInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceResourceStoreInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceStylesheetAdoptionInterface;
 use HonestlyDesign\EtchBuilders\RegistrationResult;
 use HonestlyDesign\EtchBuilders\SiteHomePolicy;
 use HonestlyDesign\EtchBuilders\SiteHomePolicyMode;
@@ -32,7 +33,7 @@ use Throwable;
  * adapter keeps builder ownership and snapshots beside native WordPress data
  * so native records remain inspectable by Etch and other WordPress tooling.
  */
-final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInterface, SitePersistenceNativeRetirementInterface, SitePersistenceRecordAdoptionInterface, SitePersistenceResourceStoreInterface {
+final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInterface, SitePersistenceNativeRetirementInterface, SitePersistenceRecordAdoptionInterface, SitePersistenceResourceStoreInterface, SitePersistenceStylesheetAdoptionInterface {
 
 	private const OPTION_PREFIX = 'etch_builders_site_record_';
 
@@ -1012,6 +1013,121 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 			&& $this->native_style_is_builder_handoff( $styles[ $style_id ], $record->payload() );
 	}
 
+	/** {@inheritdoc} */
+	public function adopt_unowned_stylesheet_records( SitePersistenceRecord ...$records ): int {
+		if ( ! \function_exists( 'get_option' ) || ! \function_exists( 'update_option' ) ) {
+			return 0;
+		}
+
+		$stylesheets = \get_option( self::GLOBAL_STYLESHEETS_OPTION, array() );
+		if ( ! is_array( $stylesheets ) ) {
+			return 0;
+		}
+
+		$by_stylesheet_id = array();
+		foreach ( $records as $record ) {
+			$payload = $record->payload();
+			$stylesheet_id = (string) ( $payload['id'] ?? '' );
+			if ( 'stylesheet' === (string) ( $payload['type'] ?? '' ) && '' !== $stylesheet_id ) {
+				$by_stylesheet_id[ $stylesheet_id ][] = $record;
+			}
+		}
+
+		$stored      = $this->stored_resources();
+		$next        = $stored;
+		$adopted     = 0;
+		$touched_ids = array();
+
+		foreach ( $by_stylesheet_id as $stylesheet_id => $id_records ) {
+			if ( ! array_key_exists( $stylesheet_id, $stylesheets ) || $this->has_owned_stylesheet_record( $stored, $stylesheet_id ) ) {
+				continue;
+			}
+
+			$planned = array();
+			foreach ( $id_records as $record ) {
+				$previous = isset( $next[ $record->identity() ] )
+					? $this->record_from_storage( $next[ $record->identity() ] )
+					: null;
+				if ( null !== $previous && ( $previous->is_owned() || $previous->fingerprint() !== $record->fingerprint() ) ) {
+					continue 2;
+				}
+				$planned[ $record->identity() ] = $record->to_array();
+			}
+
+			if ( ! $this->native_stylesheet_matches_plan( $stylesheets[ $stylesheet_id ], $stylesheet_id, array_merge( $next, $planned ), $stylesheets ) ) {
+				continue;
+			}
+
+			$next          = array_merge( $next, $planned );
+			$touched_ids[] = $stylesheet_id;
+			$adopted      += count( $planned );
+		}
+
+		if ( array() === $touched_ids ) {
+			return 0;
+		}
+
+		$fragments = \get_option( self::BUILDER_STYLESHEET_FRAGMENTS_OPTION, array() );
+		$fragments = is_array( $fragments ) ? $fragments : array();
+		$hashes    = \get_option( self::BUILDER_STYLESHEET_HASHES_OPTION, array() );
+		$hashes    = is_array( $hashes ) ? $hashes : array();
+		foreach ( $touched_ids as $stylesheet_id ) {
+			$state             = $this->build_stylesheet_state( $next, $stylesheets, $stylesheet_id );
+			$fragments         = $state['fragments'];
+			$hashes            = $state['hashes'];
+			$stylesheets       = $state['stylesheets'];
+		}
+
+		$failed = $this->update_options_atomically( array(
+			array(
+				'option' => self::RESOURCE_RECORDS_OPTION,
+				'before' => $stored,
+				'after'  => $next,
+			),
+			array(
+				'option' => self::BUILDER_STYLESHEET_FRAGMENTS_OPTION,
+				'before' => is_array( \get_option( self::BUILDER_STYLESHEET_FRAGMENTS_OPTION, array() ) ) ? \get_option( self::BUILDER_STYLESHEET_FRAGMENTS_OPTION, array() ) : array(),
+				'after'  => $fragments,
+			),
+			array(
+				'option' => self::GLOBAL_STYLESHEETS_OPTION,
+				'before' => \get_option( self::GLOBAL_STYLESHEETS_OPTION, array() ),
+				'after'  => $stylesheets,
+			),
+			array(
+				'option' => self::BUILDER_STYLESHEET_HASHES_OPTION,
+				'before' => is_array( \get_option( self::BUILDER_STYLESHEET_HASHES_OPTION, array() ) ) ? \get_option( self::BUILDER_STYLESHEET_HASHES_OPTION, array() ) : array(),
+				'after'  => $hashes,
+			),
+		) );
+		if ( null !== $failed ) {
+			return 0;
+		}
+
+		return $adopted;
+	}
+
+	/**
+	 * Whether one unowned native global stylesheet entry matches the
+	 * aggregate the compiled plan would write and may be adopted without
+	 * changing any rendered output.
+	 *
+	 * @param mixed                               $existing Persisted etch_global_stylesheets entry.
+	 * @param array<string, array<string, mixed>> $records Storage-shaped resource records the plan would own.
+	 * @param array<string, mixed>                $stylesheets Current native stylesheets option.
+	 */
+	private function native_stylesheet_matches_plan( mixed $existing, string $stylesheet_id, array $records, array $stylesheets ): bool {
+		if ( ! is_array( $existing ) ) {
+			return false;
+		}
+
+		$expected = $this->build_stylesheet_state( $records, $stylesheets, $stylesheet_id )['stylesheets'][ $stylesheet_id ] ?? null;
+
+		return is_array( $expected )
+			&& (string) ( $existing['name'] ?? '' ) === (string) ( $expected['name'] ?? '' )
+			&& (string) ( $existing['css'] ?? '' ) === (string) ( $expected['css'] ?? '' );
+	}
+
 	/**
 	 * Whether one persisted native style entry is Builder-authored handoff
 	 * state that matches the compiled record exactly and may be adopted.
@@ -1067,7 +1183,13 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ASSET_INVALID', 'Compiled stylesheet asset requires a native stylesheet id.' );
 		}
 		if ( ! $update && array_key_exists( $stylesheet_id, $stylesheets ) && ! $this->has_owned_stylesheet_record( $this->stored_resources(), $stylesheet_id ) ) {
-			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_CONFLICT', 'Existing native Etch global stylesheet is not owned by this builder.' );
+			return RegistrationResult::error(
+				'ETCH_SITE_PERSISTENCE_CONFLICT',
+				sprintf(
+					'Existing native Etch global stylesheet "%1$s" is not owned by this builder and does not match the compiled CSS. When this stylesheet was written by an earlier Builder version, remove the "%1$s" entry from the Etch website stylesheets (or delete its id from the etch_global_stylesheets option) and sync again so it is recreated under code ownership. When a person authored it, keep a copy of its CSS before removing it, or give the project stylesheet a new id.',
+					$stylesheet_id
+				)
+			);
 		}
 
 		$state = $this->build_stylesheet_state( $records, $stylesheets, $stylesheet_id );

@@ -15,6 +15,18 @@ Use this changelog as an end-user document, not a developer log.
 - Only mention breaking changes when they are real and intentional.
 - Keep maintainer-facing work in the `INTERNAL DEV CHANGELOG` section of each release.
 
+## 2.0.6
+
+### FIX
+
+- Site applies now adopt an existing website stylesheet when it exactly matches the CSS the project compiles to, instead of failing with an ownership conflict. This heals projects whose global stylesheet was created by an earlier Builder version, before stylesheet ownership was recorded: syncing used to fail on every run until someone deleted the stylesheet by hand, and now the first sync claims it automatically and later syncs report no changes.
+- When an existing website stylesheet really does differ from the compiled CSS, the apply still refuses to touch it, and the error now names the stylesheet and explains how to resolve it — remove the stylesheet so the next sync recreates it under code ownership, or keep a copy when a person wrote it — instead of leaving a dead end.
+
+### INTERNAL DEV CHANGELOG
+
+- Added `Contracts\SitePersistenceStylesheetAdoptionInterface` (`adopt_unowned_stylesheet_records`) and implemented it in `WordPressSitePersistenceStore`. `SitePersistence::apply()` runs the batch adoption inside the site apply lock before the per-record writes, because one native stylesheet aggregates fragments from several plan records and can only be proven Builder-authored against the complete planned aggregate. Adoption is fail-closed: the native entry must match the planned aggregate byte for byte, so claiming ownership changes no rendered output.
+- The unowned-native-stylesheet conflict in `persist_asset` now names the stylesheet id and the remediation instead of a bare conflict string.
+
 ## 2.0.5
 
 ### FEATURE

@@ -611,6 +611,88 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 		 * @runInSeparateProcess
 		 * @preserveGlobalState disabled
 		 */
+		public function test_unowned_native_global_stylesheet_with_matching_aggregate_is_adopted(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array();
+			$GLOBALS['etch_builders_site_persistence_posts']  = array();
+			$GLOBALS['etch_builders_site_persistence_meta']   = array();
+
+			$first = CompiledSiteResource::new(
+				CompiledSiteResourceType::ASSET,
+				'asset:stylesheet:template:slug:index:brand-fonts:7f2299a',
+				array( 'type' => 'stylesheet', 'id' => 'brand-fonts', 'path' => '/tmp/Index.css', 'css' => '/* index brand fonts */' )
+			);
+			$second = CompiledSiteResource::new(
+				CompiledSiteResourceType::ASSET,
+				'asset:stylesheet:template:single:brand-fonts:aa13c1e',
+				array( 'type' => 'stylesheet', 'id' => 'brand-fonts', 'path' => '/tmp/Single.css', 'css' => '/* single brand fonts */' )
+			);
+			$ownership = array(
+				CompiledSiteOwnership::new( 'site:root', $first->identity(), 'stylesheet' ),
+				CompiledSiteOwnership::new( 'site:root', $second->identity(), 'stylesheet' ),
+			);
+			$plan = CompiledSitePlan::from_sections( assets: array( $first, $second ), ownership: $ownership );
+
+			// A stylesheet written by an earlier Builder version: the native entry
+			// exists, but no resource ownership record survives.
+			$aggregate = "/* index brand fonts */\n\n/* single brand fonts */\n";
+			$GLOBALS['etch_builders_site_persistence_options']['etch_global_stylesheets'] = array(
+				'brand-fonts' => array( 'name' => 'brand-fonts', 'css' => $aggregate ),
+			);
+
+			$persistence = new WordPressSitePersistence();
+			$adopted     = $persistence->apply( $plan );
+			$again       = $persistence->apply( $plan );
+
+			self::assertSame( array( 'unchanged', 'unchanged' ), $this->outcomes( $adopted ) );
+			self::assertSame( array( 'unchanged', 'unchanged' ), $this->outcomes( $again ) );
+			self::assertSame( $aggregate, $GLOBALS['etch_builders_site_persistence_options']['etch_global_stylesheets']['brand-fonts']['css'] );
+
+			$resources = $GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_resources'];
+			self::assertArrayHasKey( $first->identity(), $resources );
+			self::assertArrayHasKey( $second->identity(), $resources );
+			self::assertTrue( $resources[ $first->identity() ]['owned'] );
+			self::assertTrue( $resources[ $second->identity() ]['owned'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
+		public function test_unowned_native_global_stylesheet_with_foreign_css_conflicts_with_remediation(): void {
+			$this->install_wordpress_option_stubs();
+			$GLOBALS['etch_builders_site_persistence_options'] = array();
+			$GLOBALS['etch_builders_site_persistence_posts']  = array();
+			$GLOBALS['etch_builders_site_persistence_meta']   = array();
+
+			$asset = CompiledSiteResource::new(
+				CompiledSiteResourceType::ASSET,
+				'asset:stylesheet:site:root:brand-fonts:7f2299a',
+				array( 'type' => 'stylesheet', 'id' => 'brand-fonts', 'path' => '/tmp/BrandFonts.css', 'css' => '/* compiled brand fonts */' )
+			);
+			$ownership = array(
+				CompiledSiteOwnership::new( 'site:root', $asset->identity(), 'stylesheet' ),
+			);
+			$plan = CompiledSitePlan::from_sections( assets: array( $asset ), ownership: $ownership );
+
+			$GLOBALS['etch_builders_site_persistence_options']['etch_global_stylesheets'] = array(
+				'brand-fonts' => array( 'name' => 'brand-fonts', 'css' => "/* hand written */\n" ),
+			);
+
+			$report = ( new WordPressSitePersistence() )->apply( $plan );
+
+			self::assertSame( array( 'conflict' ), $this->outcomes( $report ) );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_CONFLICT', $report->results()[0]->code() );
+			self::assertStringContainsString( 'brand-fonts', $report->results()[0]->message() );
+			self::assertStringContainsString( 'etch_global_stylesheets', $report->results()[0]->message() );
+			self::assertSame( "/* hand written */\n", $GLOBALS['etch_builders_site_persistence_options']['etch_global_stylesheets']['brand-fonts']['css'] );
+			self::assertArrayNotHasKey( $asset->identity(), $GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_resources'] ?? array() );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
 		public function test_crashed_native_claim_is_recovered_after_the_ttl_instead_of_conflicting_forever(): void {
 			foreach ( array(
 				'stale stamped claim' => 'honestlydesign/etch-builders:' . ( time() - 901 ),
