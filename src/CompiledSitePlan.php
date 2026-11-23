@@ -31,7 +31,8 @@ final class CompiledSitePlan {
 		private readonly array $assets,
 		private readonly array $ownership,
 		private readonly array $diagnostics,
-		private readonly ?SiteHomePolicy $home_page_policy
+		private readonly ?SiteHomePolicy $home_page_policy,
+		private readonly bool $partial = false
 	) {
 	}
 
@@ -118,6 +119,36 @@ final class CompiledSitePlan {
 	 */
 	public static function empty(): self {
 		return self::from_sections();
+	}
+
+	/**
+	 * Return a copy that describes only part of the site.
+	 *
+	 * A complete plan (the default) is the whole code-owned site, so records it
+	 * no longer contains are treated as removed: recorded orphan styles and
+	 * stylesheets are cleaned up after a successful apply, and orphan entity
+	 * reports compare against it. A partial plan, such as a component-only
+	 * bootstrap stage applied before the full plan, only writes its own
+	 * records and never treats absent records as removed.
+	 */
+	public function as_partial(): self {
+		return new self(
+			$this->entities,
+			$this->dependencies,
+			$this->styles,
+			$this->assets,
+			$this->ownership,
+			$this->diagnostics,
+			$this->home_page_policy,
+			true
+		);
+	}
+
+	/**
+	 * Whether this plan describes only part of the site.
+	 */
+	public function is_partial(): bool {
+		return $this->partial;
 	}
 
 	/**
@@ -217,6 +248,10 @@ final class CompiledSitePlan {
 
 		if ( null !== $this->home_page_policy ) {
 			$projection['home_page'] = $this->home_page_policy->to_array();
+		}
+
+		if ( $this->partial ) {
+			$projection['partial'] = true;
 		}
 
 		return $projection;

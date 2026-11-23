@@ -114,7 +114,7 @@ class SitePersistence implements SitePersistenceInterface {
 					: $this->apply_record( $record );
 			}
 
-			if ( $this->all_results_succeeded( $results ) && $this->store instanceof SitePersistenceResourceStoreInterface ) {
+			if ( ! $plan->is_partial() && $this->all_results_succeeded( $results ) && $this->store instanceof SitePersistenceResourceStoreInterface ) {
 				$this->cleanup_orphan_resources( $plan, $results );
 			}
 
