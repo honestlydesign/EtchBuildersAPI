@@ -2174,6 +2174,11 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 
 	/** {@inheritdoc} */
 	public function is_handed_over( string $identity ): bool {
+		// Only content can be handed over; skip the lookup for every other record.
+		if ( ! in_array( $this->native_kind( $identity ), array( 'page', 'post', 'template' ), true ) ) {
+			return false;
+		}
+
 		$post = $this->owned_native_post( $identity );
 
 		return null !== $post && '' !== (string) \get_post_meta( $this->post_id( $post ), self::HANDED_OVER_META, true );
@@ -2362,6 +2367,11 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 
 	/** {@inheritdoc} */
 	public function restore_retired_native_entity( string $identity ): ?RegistrationResult {
+		// Only pages and posts are ever retired; skip the lookup for every other record.
+		if ( ! in_array( $this->native_kind( $identity ), array( 'page', 'post' ), true ) ) {
+			return null;
+		}
+
 		$post = $this->owned_native_post( $identity );
 		if ( null === $post ) {
 			return null;
