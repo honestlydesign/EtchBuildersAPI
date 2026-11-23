@@ -52,21 +52,25 @@ final class CoreEntityContentAuthoringContractTest extends TestCase {
 			$this->method_names( $catalog, 'site.pattern.definition' )
 		);
 		self::assertSame(
-			array( 'new', 'slug', 'id', 'title', 'status', 'block', 'blocks_sequence', 'pattern_use', 'stylesheet', 'add_style', 'overwrite', 'dev_only' ),
+			array( 'new', 'slug', 'id', 'title', 'status', 'block', 'blocks_sequence', 'pattern_use', 'stylesheet', 'add_style', 'overwrite', 'dev_only', 'hand_over_after_create', 'hands_over_after_create', 'adopt_existing', 'adopts_existing', 'reclaim_from_editors', 'reclaims_from_editors' ),
 			$this->method_names( $catalog, 'site.page.definition' )
 		);
 		self::assertSame(
-			array( 'new', 'post_type', 'slug', 'id', 'title', 'status', 'block', 'blocks_sequence', 'pattern_use', 'stylesheet', 'add_style', 'overwrite', 'dev_only' ),
+			array( 'new', 'post_type', 'slug', 'id', 'title', 'status', 'block', 'blocks_sequence', 'pattern_use', 'stylesheet', 'add_style', 'overwrite', 'dev_only', 'hand_over_after_create', 'hands_over_after_create', 'adopt_existing', 'adopts_existing', 'reclaim_from_editors', 'reclaims_from_editors' ),
 			$this->method_names( $catalog, 'site.post.definition' )
 		);
 		self::assertSame(
-			array( 'new', 'slug', 'title', 'status', 'block', 'blocks_sequence', 'pattern_use', 'stylesheet', 'add_style', 'overwrite', 'dev_only' ),
+			array( 'new', 'slug', 'title', 'status', 'block', 'blocks_sequence', 'pattern_use', 'stylesheet', 'add_style', 'overwrite', 'dev_only', 'hand_over_after_create', 'hands_over_after_create', 'adopt_existing', 'adopts_existing', 'reclaim_from_editors', 'reclaims_from_editors' ),
 			$this->method_names( $catalog, 'site.template.definition' )
 		);
 		self::assertSame(
 			array( 'from_file', 'class_reference', 'new', 'css_file', 'register_references' ),
 			$this->method_names( $catalog, 'site.style.ownership' )
 		);
+		foreach ( array( 'site.page.definition', 'site.post.definition', 'site.template.definition' ) as $capability_id ) {
+			$deprecated = $this->deprecated_method_names( $catalog, $capability_id );
+			self::assertSame( array( 'overwrite' ), $deprecated, $capability_id . ' must flag overwrite() as having no effect on compiled applies' );
+		}
 		self::assertNotContains( 'blocks_markup', $this->method_names( $catalog, 'site.page.definition' ) );
 		self::assertNotContains( 'register', $this->method_names( $catalog, 'site.pattern.definition' ) );
 	}
@@ -118,6 +122,22 @@ final class CoreEntityContentAuthoringContractTest extends TestCase {
 
 		self::assertSame( 0, $exit_code, $error );
 		self::assertSame( '1.0', $output );
+	}
+
+	/**
+	 * @return list<string>
+	 */
+	private function deprecated_method_names( AuthoringContractCatalog $catalog, string $capability_id ): array {
+		$names = array();
+		foreach ( $catalog->interfaces_for( $capability_id ) as $interface ) {
+			$fact = $interface->to_array();
+			if ( true === $fact['deprecated'] ) {
+				self::assertIsString( $fact['deprecation_reason'] );
+				self::assertStringContainsString( 'compiled Site applies', $fact['deprecation_reason'] );
+				$names[] = $interface->method_name();
+			}
+		}
+		return $names;
 	}
 
 	/** @return list<string> */

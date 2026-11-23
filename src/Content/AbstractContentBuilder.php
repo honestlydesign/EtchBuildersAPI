@@ -257,8 +257,14 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	/**
 	 * Allow replacing existing or edited content.
 	 *
+	 * Only the direct register() path reads this flag. Compiled Site applies
+	 * ignore it: they always write code-owned content. Use
+	 * hand_over_after_create() for content editors should own, and
+	 * adopt_existing() to take over existing WordPress content.
+	 *
 	 * @param bool $overwrite Whether to overwrite.
 	 * @authoring-contract-version 1.0
+	 * @authoring-deprecated Has no effect on compiled Site applies; use hand_over_after_create(), adopt_existing(), or reclaim_from_editors() instead.
 	 */
 	public function overwrite( bool $overwrite = true ): static {
 		$this->overwrite = $overwrite;
@@ -311,6 +317,8 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 
 	/**
 	 * Whether compiled Site applies create this content once and then leave it to editors.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function hands_over_after_create(): bool {
 		return $this->hand_over_after_create;
@@ -339,6 +347,8 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 
 	/**
 	 * Whether compiled Site applies may take over one existing unowned native record.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function adopts_existing(): bool {
 		return $this->adopt_existing;
@@ -365,6 +375,8 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 
 	/**
 	 * Whether compiled Site applies may take back content handed over to editors.
+	 *
+	 * @authoring-contract-version 1.0
 	 */
 	public function reclaims_from_editors(): bool {
 		return $this->reclaim_from_editors;
