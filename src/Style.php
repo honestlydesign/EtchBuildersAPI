@@ -11,6 +11,7 @@ namespace HonestlyDesign\EtchBuilders;
 
 use InvalidArgumentException;
 use HonestlyDesign\EtchBuilders\Environment;
+use HonestlyDesign\EtchBuilders\Support\EditorStyleDuplicates;
 use RuntimeException;
 
 /**
@@ -681,15 +682,59 @@ final class Style {
 		}
 
 		$persisted = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
-		if ( is_array( $persisted ) ) {
-			foreach ( $persisted as $style_id => $style ) {
-				if ( ! is_array( $style ) || ! isset( $style['selector'] ) || ! is_string( $style['selector'] ) ) {
-					continue;
-				}
+		$persisted = is_array( $persisted ) ? $persisted : array();
+		$ledger    = EditorStyleDuplicates::ledger_selectors( Environment::storage()->get( EditorStyleDuplicates::RESOURCES_OPTION, array() ) );
+		$aliases   = EditorStyleDuplicates::aliases( Environment::storage()->get( EditorStyleDuplicates::ALIASES_OPTION, array() ) );
+		$editor_duplicates = array();
+		$has_recorded_owner = false;
 
-				if ( StylesParserRuleScanner::normalize_selector_key( $style['selector'] ) === $selector_key ) {
-					$matches[ (string) $style_id ] = true;
+		foreach ( $persisted as $style_id => $style ) {
+			if ( ! is_array( $style ) || ! isset( $style['selector'] ) || ! is_string( $style['selector'] ) ) {
+				continue;
+			}
+
+			if ( StylesParserRuleScanner::normalize_selector_key( $style['selector'] ) !== $selector_key ) {
+				continue;
+			}
+
+			$style_id = (string) $style_id;
+			if ( isset( $aliases[ $style_id ] ) ) {
+				// An adopted editor duplicate mirrors its code-owned style.
+				$canonical = $aliases[ $style_id ]['canonical'];
+				if ( ( $ledger[ $canonical ] ?? null ) === $selector_key ) {
+					$matches[ $canonical ] = true;
+					$has_recorded_owner    = true;
 				}
+				continue;
+			}
+
+			$recorded = isset( $ledger[ $style_id ] ) || EditorStyleDuplicates::is_code_collection( $style );
+			if ( ! $recorded && EditorStyleDuplicates::is_editor_collection( $style ) ) {
+				$editor_duplicates[ $style_id ] = $style;
+				continue;
+			}
+
+			$matches[ $style_id ] = true;
+			$has_recorded_owner   = $has_recorded_owner || $recorded;
+		}
+
+		// A recorded code-owned style keeps its ID even when its native record
+		// was removed, so an editor duplicate cannot take the selector over.
+		foreach ( $ledger as $style_id => $ledger_selector ) {
+			if ( $ledger_selector === $selector_key && ! array_key_exists( $style_id, $persisted ) ) {
+				$matches[ (string) $style_id ] = true;
+				$has_recorded_owner            = true;
+			}
+		}
+
+		// Unowned default-collection styles do not compete with a recorded
+		// code-owned style: site applies adopt empty or identical ones as
+		// mirrors and report the ones a person wrote. Empty placeholders never
+		// decide an ID, because they are what the Etch editor creates when it
+		// misses a code-owned class.
+		foreach ( $editor_duplicates as $style_id => $style ) {
+			if ( ! $has_recorded_owner && ! EditorStyleDuplicates::is_empty_placeholder( $style ) ) {
+				$matches[ (string) $style_id ] = true;
 			}
 		}
 
@@ -699,11 +744,17 @@ final class Style {
 		}
 
 		if ( count( $matching_ids ) > 1 ) {
+			$described = array();
+			foreach ( $matching_ids as $matching_id ) {
+				$collection = $persisted[ $matching_id ]['collection'] ?? ( isset( $ledger[ $matching_id ] ) ? 'recorded code-owned style' : '(none)' );
+				$described[] = sprintf( '%s (collection %s)', $matching_id, is_string( $collection ) ? $collection : '(none)' );
+			}
+
 			throw new RuntimeException(
 				sprintf(
-					'Multiple existing Etch styles use selector `%s`: %s.',
+					'Multiple existing Etch styles use selector `%s`: %s. Keep one style for this selector: delete the extra style in the Etch editor, or merge its CSS into the code-owned CSS file first.',
 					$selector_key,
-					implode( ', ', $matching_ids )
+					implode( ', ', $described )
 				)
 			);
 		}

@@ -68,8 +68,11 @@ final class AuthoringInterfaceFact {
 		$doc_comment = $method->getDocComment();
 		$contract_version = self::required_doc_tag( false === $doc_comment ? '' : $doc_comment, 'authoring-contract-version', $symbol );
 		$doc_comment = false === $doc_comment ? '' : $doc_comment;
-		$deprecation = self::optional_doc_tag( $doc_comment, 'deprecated' );
-		$deprecated  = self::has_doc_tag( $doc_comment, 'deprecated' );
+		// `@authoring-deprecated` marks a symbol deprecated for authoring
+		// without a PHP `@deprecated` tag, so static analysis of existing
+		// projects that still call it keeps passing.
+		$deprecation = self::optional_doc_tag( $doc_comment, 'deprecated' ) ?? self::optional_doc_tag( $doc_comment, 'authoring-deprecated' );
+		$deprecated  = self::has_doc_tag( $doc_comment, 'deprecated' ) || self::has_doc_tag( $doc_comment, 'authoring-deprecated' );
 
 		return new self(
 			$symbol->class_name(),

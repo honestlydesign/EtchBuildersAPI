@@ -79,6 +79,27 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	private bool $dev_only = false;
 
 	/**
+	 * Whether compiled Site applies create this content once and then leave it to editors.
+	 *
+	 * @var bool
+	 */
+	private bool $hand_over_after_create = false;
+
+	/**
+	 * Whether compiled Site applies may take over one existing unowned native record.
+	 *
+	 * @var bool
+	 */
+	private bool $adopt_existing = false;
+
+	/**
+	 * Whether compiled Site applies may take back content handed over to editors.
+	 *
+	 * @var bool
+	 */
+	private bool $reclaim_from_editors = false;
+
+	/**
 	 * Content buffer.
 	 *
 	 * @var ContentBuffer
@@ -236,8 +257,14 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	/**
 	 * Allow replacing existing or edited content.
 	 *
+	 * Only the direct register() path reads this flag. Compiled Site applies
+	 * ignore it: they always write code-owned content. Use
+	 * hand_over_after_create() for content editors should own, and
+	 * adopt_existing() to take over existing WordPress content.
+	 *
 	 * @param bool $overwrite Whether to overwrite.
 	 * @authoring-contract-version 1.0
+	 * @authoring-deprecated Has no effect on compiled Site applies; use hand_over_after_create(), adopt_existing(), or reclaim_from_editors() instead.
 	 */
 	public function overwrite( bool $overwrite = true ): static {
 		$this->overwrite = $overwrite;
@@ -265,6 +292,94 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 */
 	public function is_dev_only(): bool {
 		return $this->dev_only;
+	}
+
+	/**
+	 * Create this content once, then hand it over to editors.
+	 *
+	 * A compiled Site apply creates the native record when it is missing and
+	 * never writes it again: later applies leave edits made in WordPress and
+	 * later code changes alike untouched, and report the record as unchanged.
+	 * Class styles and stylesheets the content uses stay code-owned. Content
+	 * an editor renamed, trashed, or deleted is not created again. To manage
+	 * the content from code again, remove this call and add
+	 * reclaim_from_editors(); without it the apply reports a conflict and
+	 * keeps the editors' version.
+	 *
+	 * @param bool $hand_over Whether to hand the content over after creating it.
+	 * @authoring-contract-version 1.0
+	 */
+	public function hand_over_after_create( bool $hand_over = true ): static {
+		$this->hand_over_after_create = $hand_over;
+
+		return $this;
+	}
+
+	/**
+	 * Whether compiled Site applies create this content once and then leave it to editors.
+	 *
+	 * @authoring-contract-version 1.0
+	 */
+	public function hands_over_after_create(): bool {
+		return $this->hand_over_after_create;
+	}
+
+	/**
+	 * Take over an existing WordPress record with the same identity.
+	 *
+	 * By default an apply refuses to touch a page, post, or template it did
+	 * not create and reports a conflict. With this flag the apply claims the
+	 * record when exactly one matching record exists that the Builder does
+	 * not own and that is not a translation. Managed content is then
+	 * overwritten with the compiled version; adoption is refused for post
+	 * types without revisions unless the content already matches, so the
+	 * earlier version stays recoverable. Content that is also handed over
+	 * keeps its current WordPress content.
+	 *
+	 * @param bool $adopt Whether to adopt an existing record.
+	 * @authoring-contract-version 1.0
+	 */
+	public function adopt_existing( bool $adopt = true ): static {
+		$this->adopt_existing = $adopt;
+
+		return $this;
+	}
+
+	/**
+	 * Whether compiled Site applies may take over one existing unowned native record.
+	 *
+	 * @authoring-contract-version 1.0
+	 */
+	public function adopts_existing(): bool {
+		return $this->adopt_existing;
+	}
+
+	/**
+	 * Take back content an earlier apply handed over to editors.
+	 *
+	 * Without this flag, content that was handed over stays with editors
+	 * even after hand_over_after_create() is removed: the apply reports a
+	 * conflict instead of overwriting their work. With it, the next apply
+	 * replaces the editors' version with the code version, and content an
+	 * editor renamed, trashed, or deleted is created again. Remove the flag
+	 * once the content is managed by code again.
+	 *
+	 * @param bool $reclaim Whether to reclaim handed-over content.
+	 * @authoring-contract-version 1.0
+	 */
+	public function reclaim_from_editors( bool $reclaim = true ): static {
+		$this->reclaim_from_editors = $reclaim;
+
+		return $this;
+	}
+
+	/**
+	 * Whether compiled Site applies may take back content handed over to editors.
+	 *
+	 * @authoring-contract-version 1.0
+	 */
+	public function reclaims_from_editors(): bool {
+		return $this->reclaim_from_editors;
 	}
 
 	/**

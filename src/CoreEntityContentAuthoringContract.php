@@ -90,6 +90,12 @@ final class CoreEntityContentAuthoringContract {
 			'add_style'       => AuthoringCapabilitySourceSymbol::method( AbstractContentBuilder::class, 'add_style' ),
 			'overwrite'       => AuthoringCapabilitySourceSymbol::method( AbstractContentBuilder::class, 'overwrite' ),
 			'dev_only'        => AuthoringCapabilitySourceSymbol::method( AbstractContentBuilder::class, 'dev_only' ),
+			'hand_over'       => AuthoringCapabilitySourceSymbol::method( AbstractContentBuilder::class, 'hand_over_after_create' ),
+			'hands_over'      => AuthoringCapabilitySourceSymbol::method( AbstractContentBuilder::class, 'hands_over_after_create' ),
+			'adopt'           => AuthoringCapabilitySourceSymbol::method( AbstractContentBuilder::class, 'adopt_existing' ),
+			'adopts'          => AuthoringCapabilitySourceSymbol::method( AbstractContentBuilder::class, 'adopts_existing' ),
+			'reclaim'         => AuthoringCapabilitySourceSymbol::method( AbstractContentBuilder::class, 'reclaim_from_editors' ),
+			'reclaims'        => AuthoringCapabilitySourceSymbol::method( AbstractContentBuilder::class, 'reclaims_from_editors' ),
 		);
 
 		return AuthoringCapabilitySourceCatalog::from_declarations(
@@ -127,7 +133,13 @@ final class CoreEntityContentAuthoringContract {
 				$content_symbols['stylesheet'],
 				$content_symbols['add_style'],
 				$content_symbols['overwrite'],
-				$content_symbols['dev_only']
+				$content_symbols['dev_only'],
+				$content_symbols['hand_over'],
+				$content_symbols['hands_over'],
+				$content_symbols['adopt'],
+				$content_symbols['adopts'],
+				$content_symbols['reclaim'],
+				$content_symbols['reclaims']
 			),
 			AuthoringCapabilitySourceDeclaration::for_capability(
 				'site.post.definition',
@@ -143,7 +155,13 @@ final class CoreEntityContentAuthoringContract {
 				$content_symbols['stylesheet'],
 				$content_symbols['add_style'],
 				$content_symbols['overwrite'],
-				$content_symbols['dev_only']
+				$content_symbols['dev_only'],
+				$content_symbols['hand_over'],
+				$content_symbols['hands_over'],
+				$content_symbols['adopt'],
+				$content_symbols['adopts'],
+				$content_symbols['reclaim'],
+				$content_symbols['reclaims']
 			),
 			AuthoringCapabilitySourceDeclaration::for_capability(
 				'site.template.definition',
@@ -157,7 +175,13 @@ final class CoreEntityContentAuthoringContract {
 				$content_symbols['stylesheet'],
 				$content_symbols['add_style'],
 				$content_symbols['overwrite'],
-				$content_symbols['dev_only']
+				$content_symbols['dev_only'],
+				$content_symbols['hand_over'],
+				$content_symbols['hands_over'],
+				$content_symbols['adopt'],
+				$content_symbols['adopts'],
+				$content_symbols['reclaim'],
+				$content_symbols['reclaims']
 			),
 			AuthoringCapabilitySourceDeclaration::for_capability(
 				'site.style.ownership',

@@ -61,6 +61,26 @@ final class AuthoringContractCatalogGeneratorTest extends TestCase {
 		self::assertNotContains( 'public_only_by_enumeration', $this->interface_method_names( $interfaces ) );
 	}
 
+	public function test_authoring_only_deprecation_is_exported_without_a_php_deprecated_tag(): void {
+		$catalog = AuthoringContractCatalogGenerator::generate(
+			$this->capabilities(),
+			AuthoringCapabilitySourceCatalog::from_declarations(
+				AuthoringCapabilitySourceDeclaration::for_capability(
+					'site.factory',
+					AuthoringCapabilitySourceSymbol::method( ContractFixture::class, 'factory' ),
+					AuthoringCapabilitySourceSymbol::method( ContractFixture::class, 'kept_for_compatibility' )
+				)
+			),
+			'1.1.8-dev'
+		);
+
+		$fact = $catalog->to_array()['capabilities'][0]['interfaces'][1];
+
+		self::assertSame( 'kept_for_compatibility', $fact['method'] );
+		self::assertTrue( $fact['deprecated'] );
+		self::assertSame( 'Has no effect on compiled applies.', $fact['deprecation_reason'] );
+	}
+
 	public function test_generation_is_deterministic_and_canonical_projection_round_trips(): void {
 		$first  = AuthoringContractCatalogGenerator::generate( $this->capabilities(), $this->sources(), '1.1.8-dev' );
 		$second = AuthoringContractCatalogGenerator::generate( $this->capabilities(), $this->sources(), '1.1.8-dev' );
@@ -240,6 +260,13 @@ final class ContractFixture {
 	 * @deprecated
 	 */
 	public function legacy_without_reason(): void {
+	}
+
+	/**
+	 * @authoring-contract-version 1.0
+	 * @authoring-deprecated Has no effect on compiled applies.
+	 */
+	public function kept_for_compatibility(): void {
 	}
 
 	public function public_only_by_enumeration(): void {
