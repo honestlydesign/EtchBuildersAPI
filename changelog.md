@@ -15,6 +15,30 @@ Use this changelog as an end-user document, not a developer log.
 - Only mention breaking changes when they are real and intentional.
 - Keep maintainer-facing work in the `INTERNAL DEV CHANGELOG` section of each release.
 
+## 2.1.1
+
+### FIX
+
+- Code-owned styles are now stored in Etch's default collection, so the Etch builder links them instead of creating empty duplicates on paste, move or code edit. Existing sites are migrated on the next deploy.
+- Style copies the Etch editor already created keep following the code-owned CSS after the upgrade, and the migration keeps every style ID, so elements stay linked.
+
+### MIGRATION NOTES
+
+- The first deploy with this release reports each code-owned style as updated once, because it moves to the default collection. Later deploys report them as unchanged again.
+
+### INTERNAL DEV CHANGELOG
+
+- Collections are presentation only. Every code-owned style is persisted with `collection: default`: Entity Style Sets and the builder preview class styles of `ClassStyleRegistry` (previously `OhMyIDEtch:entity:<entityId>` and `OhMyIDEtch`).
+- Ownership evidence is Builders-owned state:
+  - Request-local: `Style` keeps an owner map keyed by style ID, beside the registry and never in the Etch record. `Style::owner( string )` (internal) sets it; Entity Style Sets record their entity identity. A style added with a legacy `OhMyIDEtch:entity:<id>` collection and no explicit owner is owned by `<id>`. `snapshot_state()` returns an `owners` key, and `restore_state()` accepts it as optional. `restore( registry )` keeps the current owners of the restored IDs. Claimed, retained, and released identity shapes carry `owner: string|null` instead of `collection`.
+  - Across requests: the resource ledger (`etch_builders_site_persistence_resources`, `style:<id>` records with `owned: true`). `WordPressSitePersistenceStore` now writes the native style and its ledger record in one rollback-safe group, so a `default` style never exists without its record.
+  - Records still in `OhMyIDEtch` or `OhMyIDEtch:*` collections count as Builder-written (2.1.0 and earlier), and `OhMyIDEtch:entity:<id>` still names its entity, until the next apply moves them to `default` under the same ID.
+- `Style::forget_registered_collection()` (internal) is replaced by `Style::forget_registered_owner( string )`. Reloading one Entity Style Set no longer touches other entities or Etch's own `default` styles. New internal helpers: `Style::registered_owner()`, `Style::registered_ids_for_owner()`.
+- `EntityStyleSet` ownership checks: a request-local style must belong to the same entity, which is exact as before. A persisted style must be in the entity's legacy collection, or recorded in the ledger for the same selector, or registered by the same entity earlier in the request. After the migration, the persisted check proves that a style is Builder-owned, not which entity owns it, because the ledger has no per-Entity-Style-Set owner (page and template sets use other identities than their compiled entities). Two entities that define the same selector in one build still fail as in 2.1.0.
+- Without the internal flag (dropped by an Etch editor save), unrecorded native styles are adopted only from a legacy Builder collection, or when they are the readonly builder preview placeholder. Removing a recorded style compares selector, CSS, and type only. `migrate_legacy_ownership()` accepts a native style in a legacy Builder collection for a compiled style in `default`.
+- Editor duplicate detection: a `default` style is a duplicate only when the ledger does not record it and it is not in a legacy entity collection. The builder preview placeholder is adopted as a mirror like an empty duplicate. The "Multiple existing Etch styles" error names the owner (`code-owned by <entity>` or `code-owned`) instead of the shared collection.
+- Known limitation: `Style::register_all()` writes no ledger record. A site that persists Entity Style Sets only through it (not through compiled site persistence) cannot prove ownership in a later request and gets an ownership error. Same-request reloads still work. No known consumer does this; the devkit uses compiled site persistence.
+
 ## 2.1.0
 
 ### FEATURE

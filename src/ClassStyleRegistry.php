@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders;
 
+use HonestlyDesign\EtchBuilders\Support\EditorStyleDuplicates;
 use HonestlyDesign\EtchBuilders\Exceptions\PersistedStyleIdentityException;
 
 /**
@@ -331,12 +332,14 @@ final class ClassStyleRegistry {
 		$selector = self::selector_for_class( $class_token );
 
 		try {
+			// The default collection is where the Etch editor looks classes up,
+			// so it links this style instead of creating an empty copy.
 			$style_id = Style::new()
 				->id( $class_token )
 				->selector( $selector )
-				->css( '/* class style registered for builder preview */' )
+				->css( EditorStyleDuplicates::PREVIEW_PLACEHOLDER_CSS )
 				->type( 'class' )
-				->collection( 'OhMyIDEtch' )
+				->collection( 'default' )
 				->readonly( true )
 				->add();
 		} catch ( \InvalidArgumentException $exception ) {

@@ -28,8 +28,8 @@ final class ClassStyleOwnershipTest extends TestCase {
 	/**
 	 * @var array{
 	 *     registry: array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
- *     claimed_identities: array<array-key, array{selector: string, type: string, collection: string}>,
- *     retained_persisted_identities: array<array-key, array{selector: string, type: string, collection: string}>
+ *     claimed_identities: array<array-key, array{selector: string, type: string, owner: string|null}>,
+ *     retained_persisted_identities: array<array-key, array{selector: string, type: string, owner: string|null}>
 	 * }
 	 */
 	private array $style_state;
@@ -652,7 +652,7 @@ final class ClassStyleOwnershipTest extends TestCase {
 
 		$registered = Style::registered_styles();
 		self::assertSame( '.missing-class', $registered['missing-class']['selector'] );
-		self::assertSame( 'OhMyIDEtch', $registered['missing-class']['collection'] );
+		self::assertSame( 'default', $registered['missing-class']['collection'], 'The Etch editor looks classes up only in the default collection.' );
 		self::assertTrue( $registered['missing-class']['readonly'] ?? false );
 	}
 

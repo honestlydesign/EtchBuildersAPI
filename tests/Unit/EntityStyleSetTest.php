@@ -53,7 +53,8 @@ final class EntityStyleSetTest extends TestCase {
 		self::assertSame( 'component:Hero', $styles->entity_id() );
 		self::assertSame( '.hero__title', $reference->selector() );
 		self::assertArrayHasKey( $reference->id(), $registered );
-		self::assertSame( 'OhMyIDEtch:entity:component:Hero', $registered[ $reference->id() ]['collection'] );
+		self::assertSame( 'default', $registered[ $reference->id() ]['collection'], 'The Etch editor looks classes up only in the default collection.' );
+		self::assertSame( 'component:Hero', Style::registered_owner( $reference->id() ) );
 		self::assertTrue( $registered[ $reference->id() ]['overwrite_on_register'] ?? false );
 		self::assertSame( array( $reference->id() ), ClassStyleSet::of( $reference )->ids() );
 	}
@@ -131,13 +132,8 @@ final class EntityStyleSetTest extends TestCase {
 	}
 
 	public function test_request_local_style_owned_by_another_entity_is_not_adopted(): void {
-		Style::new()
-			->id( 'header-title-id' )
-			->selector( '.shared__title' )
-			->css( 'color: blue' )
-			->collection( 'OhMyIDEtch:entity:pattern:Header' )
-			->overwrite_on_register( true )
-			->add();
+		$header = EntityStyleSet::from_file( 'pattern:Header', $this->write_css( '.shared__title { color: blue; }' ) );
+		$header_id = $header->class_reference( '.shared__title' )->id();
 		$before = Style::snapshot_state();
 
 		try {
@@ -145,13 +141,135 @@ final class EntityStyleSetTest extends TestCase {
 				'component:Hero',
 				$this->write_css( '.shared__title { color: red; }' )
 			);
-			self::fail( 'Two entities must not own the same request-local style.' );
+			self::fail( 'Two entities must not own the same request-local style, although both now share the default collection.' );
 		} catch ( \InvalidArgumentException $exception ) {
-			self::assertStringContainsString( 'header-title-id', $exception->getMessage() );
+			self::assertStringContainsString( $header_id, $exception->getMessage() );
 			self::assertStringContainsString( 'pattern:Header', $exception->getMessage() );
 		}
 
 		self::assertSame( $before, Style::snapshot_state() );
+	}
+
+	public function test_a_style_registered_with_a_legacy_entity_collection_still_belongs_to_that_entity(): void {
+		Style::new()
+			->id( 'header-title-id' )
+			->selector( '.shared__title' )
+			->css( 'color: blue' )
+			->collection( 'OhMyIDEtch:entity:pattern:Header' )
+			->overwrite_on_register( true )
+			->add();
+
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'pattern:Header' );
+
+		EntityStyleSet::from_file( 'component:Hero', $this->write_css( '.shared__title { color: red; }' ) );
+	}
+
+	public function test_reloading_one_entity_keeps_other_entities_and_etch_builtin_default_styles(): void {
+		Style::new()
+			->id( 'etch-section-style' )
+			->selector( ':where([data-etch-element="section"])' )
+			->css( 'inline-size: 100%;' )
+			->readonly( true )
+			->add();
+		$header = EntityStyleSet::from_file( 'pattern:Header', $this->write_css( '.header { display: flex; }' ) );
+		EntityStyleSet::from_file( 'component:Hero', $this->write_css( '.hero { display: grid; } .hero__title { color: red; }' ) );
+
+		$reloaded = EntityStyleSet::from_file( 'component:Hero', $this->write_css( '.hero { display: block; }' ) );
+
+		$registered = Style::registered_styles();
+		self::assertSame(
+			array( 'etch-section-style', $header->class_reference( '.header' )->id(), $reloaded->class_reference( '.hero' )->id() ),
+			array_map( 'strval', array_keys( $registered ) )
+		);
+		self::assertSame( 'display: block', $registered[ $reloaded->class_reference( '.hero' )->id() ]['css'] );
+		self::assertSame( 'default', $registered['etch-section-style']['collection'] );
+	}
+
+	public function test_an_entity_reloads_after_its_registry_was_restored_from_a_snapshot(): void {
+		$first = EntityStyleSet::from_file( 'component:Hero', $this->write_css( '.hero { display: grid; }' ) );
+
+		Style::restore( Style::snapshot() );
+
+		$second = EntityStyleSet::from_file( 'component:Hero', $this->write_css( '.hero { display: flex; }' ) );
+		self::assertSame( $first->style_ids(), $second->style_ids() );
+	}
+
+	public function test_an_entity_reloads_its_own_styles_after_they_were_persisted_in_the_same_request(): void {
+		$first = EntityStyleSet::from_file( 'component:Hero', $this->write_css( '.hero { display: grid; }' ) );
+		self::assertTrue( Style::register_all() );
+
+		$second = EntityStyleSet::from_file( 'component:Hero', $this->write_css( '.hero { display: flex; }' ) );
+
+		self::assertSame( $first->style_ids(), $second->style_ids() );
+	}
+
+	public function test_a_recorded_code_owned_default_style_is_reused_without_writing(): void {
+		$persisted = array(
+			'opaque-hero-title' => array(
+				'selector'   => '.hero__title',
+				'collection' => 'default',
+				'css'        => 'color: blue',
+				'type'       => 'class',
+			),
+		);
+		$storage = new EntityStyleSetStorage(
+			array(
+				'etch_styles' => $persisted,
+				'etch_builders_site_persistence_resources' => array(
+					'style:opaque-hero-title' => array(
+						'identity' => 'style:opaque-hero-title',
+						'kind'     => 'style',
+						'payload'  => $persisted['opaque-hero-title'],
+						'owned'    => true,
+					),
+				),
+			)
+		);
+		Environment::configure( $storage, new NullMode(), new NullAssetRegistry() );
+
+		$styles = EntityStyleSet::from_file( 'component:Hero', $this->write_css( '.hero__title { color: red; }' ) );
+
+		self::assertSame( 'opaque-hero-title', $styles->class_reference( '.hero__title' )->id() );
+		self::assertSame( 0, $storage->set_calls );
+	}
+
+	public function test_an_unrecorded_default_style_a_person_wrote_is_not_adopted(): void {
+		Environment::storage()->set(
+			'etch_styles',
+			array(
+				'k3x9p2a' => array(
+					'selector'   => '.hero__title',
+					'collection' => 'default',
+					'css'        => 'color: blue',
+					'type'       => 'class',
+				),
+			)
+		);
+
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'k3x9p2a' );
+
+		EntityStyleSet::from_file( 'component:Hero', $this->write_css( '.hero__title { color: red; }' ) );
+	}
+
+	public function test_a_persisted_style_in_another_entitys_legacy_collection_is_not_adopted(): void {
+		Environment::storage()->set(
+			'etch_styles',
+			array(
+				'header-title' => array(
+					'selector'   => '.hero__title',
+					'collection' => 'OhMyIDEtch:entity:pattern:Header',
+					'css'        => 'color: blue',
+					'type'       => 'class',
+				),
+			)
+		);
+
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'pattern:Header' );
+
+		EntityStyleSet::from_file( 'component:Hero', $this->write_css( '.hero__title { color: red; }' ) );
 	}
 
 	public function test_construction_rolls_back_earlier_definitions_when_a_later_owner_check_fails(): void {

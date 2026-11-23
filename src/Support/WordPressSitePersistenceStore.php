@@ -306,7 +306,7 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 				$style_id = substr( $resource->identity(), strlen( 'style:' ) );
 				$styles   = \get_option( self::STYLES_OPTION, array() );
 				$native   = is_array( $styles ) ? ( $styles[ $style_id ] ?? null ) : null;
-				if ( ! is_array( $native ) || $native !== $resource->payload() || ! $this->has_legacy_style_marker( $style_id, $resource->payload() ) ) {
+				if ( ! is_array( $native ) || ! $this->native_matches_legacy_payload( $native, $resource->payload() ) || ! $this->has_legacy_style_marker( $style_id, $native ) ) {
 					return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_LEGACY_OWNERSHIP_UNPROVEN', sprintf( 'Legacy style "%s" does not have an exact bounded ownership match.', $resource->identity() ) );
 				}
 			} elseif ( 'stylesheet' === (string) ( $resource->payload()['type'] ?? '' ) ) {
@@ -1132,11 +1132,35 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 
 		$next         = $styles;
 		$next[ $style_id ] = $record->payload();
-		if ( ! $this->update_option_if_changed( self::STYLES_OPTION, $styles, $next ) ) {
+
+		// The ledger record is the only ownership evidence that survives an
+		// Etch editor save (the collection is `default` like a person's style),
+		// so the native style and its record are written together or not at all.
+		$records = \get_option( self::RESOURCE_RECORDS_OPTION, array() );
+		$records = is_array( $records ) ? $records : array();
+		$next_records = $records;
+		$next_records[ $record->identity() ] = $record->to_array();
+
+		$failed = $this->update_options_atomically( array(
+			array(
+				'option' => self::STYLES_OPTION,
+				'before' => $styles,
+				'after'  => $next,
+			),
+			array(
+				'option' => self::RESOURCE_RECORDS_OPTION,
+				'before' => $records,
+				'after'  => $next_records,
+			),
+		) );
+		if ( self::STYLES_OPTION === $failed ) {
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_UPDATE_FAILED', 'WordPress could not update the native Etch style option.' );
 		}
+		if ( null !== $failed ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not store the compiled resource ownership snapshot; the native Etch style write was rolled back.' );
+		}
 
-		return $this->store_resource_snapshot( $record );
+		return RegistrationResult::success();
 	}
 
 	private function find_asset( string $identity ): ?SitePersistenceRecord {
@@ -1305,28 +1329,50 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 	 * Whether one persisted native style entry is Builder-authored handoff
 	 * state that matches the compiled record exactly and may be adopted.
 	 *
+	 * Used only for entries no ledger record owns, so the entry itself must
+	 * prove Builder authorship.
+	 *
 	 * @param mixed               $existing Persisted etch_styles entry.
 	 * @param array<string, mixed> $payload Compiled style payload.
 	 */
 	private function native_style_is_builder_handoff( mixed $existing, array $payload ): bool {
-		if ( ! is_array( $existing ) ) {
+		if ( ! is_array( $existing ) || ! $this->native_style_matches_payload( $existing, $payload ) ) {
 			return false;
 		}
 
-		if ( true !== ( $existing['overwrite_on_register'] ?? null ) ) {
-			// The Etch editor drops this internal flag whenever it saves the
-			// style option. Without it, only an exact match inside the style's
-			// own non-default collection still proves Builder authorship.
-			$collection = $existing['collection'] ?? null;
-			if ( array_key_exists( 'overwrite_on_register', $existing )
-				|| ! is_string( $collection )
-				|| EditorStyleDuplicates::EDITOR_COLLECTION === $collection
-				|| $collection !== ( $payload['collection'] ?? null )
-			) {
-				return false;
-			}
+		if ( true === ( $existing['overwrite_on_register'] ?? null ) ) {
+			return true;
 		}
 
+		if ( array_key_exists( 'overwrite_on_register', $existing ) ) {
+			return false;
+		}
+
+		// The Etch editor drops the internal flag whenever it saves the style
+		// option. Without it, an exact match still proves Builder authorship
+		// inside a collection only Builders 2.1.0 and earlier wrote, when the
+		// compiled style keeps that collection or moves to `default`; and for
+		// the readonly builder preview placeholder. A `default` entry without
+		// the flag could be a person's identical style, so it is not adopted.
+		$collection = $existing['collection'] ?? null;
+		if ( EditorStyleDuplicates::is_legacy_builder_collection( $collection )
+			&& in_array( $payload['collection'] ?? null, array( $collection, EditorStyleDuplicates::EDITOR_COLLECTION ), true )
+		) {
+			return true;
+		}
+
+		return EditorStyleDuplicates::is_builder_preview_placeholder( $existing )
+			&& EditorStyleDuplicates::is_builder_preview_placeholder( $payload );
+	}
+
+	/**
+	 * Whether a native style still renders exactly what a compiled payload
+	 * wrote, ignoring the keys the Etch editor drops or adds when it saves.
+	 *
+	 * @param array<array-key, mixed> $existing Persisted etch_styles entry.
+	 * @param array<string, mixed>    $payload  Compiled style payload.
+	 */
+	private function native_style_matches_payload( array $existing, array $payload ): bool {
 		foreach ( array( 'selector', 'css', 'type' ) as $field ) {
 			if ( (string) ( $existing[ $field ] ?? '' ) !== (string) ( $payload[ $field ] ?? '' ) ) {
 				return false;
@@ -1392,9 +1438,11 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 
 			$canonical_id = $canonicals[ $selector ][0]['id'];
 			$payload      = $canonicals[ $selector ][0]['payload'];
+			// Code-owned styles share the default collection since 2.1.1; the
+			// ledger, not the collection, tells them apart from editor copies.
 			if ( $duplicate_id === $canonical_id
 				|| isset( $ledger[ $duplicate_id ] )
-				|| EditorStyleDuplicates::is_code_collection( $duplicate )
+				|| EditorStyleDuplicates::is_legacy_entity_collection( $duplicate )
 				|| ! EditorStyleDuplicates::is_editor_collection( $duplicate )
 			) {
 				continue;
@@ -1406,6 +1454,7 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 				&& EditorStyleDuplicates::payload_hash( $duplicate ) === $alias['hash'];
 			$adoptable = $tracked
 				|| EditorStyleDuplicates::is_empty_placeholder( $duplicate )
+				|| EditorStyleDuplicates::is_builder_preview_placeholder( $duplicate )
 				|| EditorStyleDuplicates::css_matches( (string) ( $duplicate['css'] ?? '' ), (string) ( $payload['css'] ?? '' ) );
 
 			if ( ! $adoptable ) {
@@ -1582,11 +1631,13 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		$style_id = substr( $record->identity(), strlen( 'style:' ) );
 		$next     = $styles;
 		$native   = $styles[ $style_id ] ?? null;
-		// The Etch editor drops the internal ownership flag whenever it saves,
-		// so an otherwise unchanged code style still counts as unchanged.
+		// The ledger record proves the style is Builder-owned. The Etch editor
+		// drops the internal ownership flag whenever it saves, and the next
+		// apply moves records written by 2.1.0 and earlier to `default`, so an
+		// unchanged code style is one that still renders the recorded CSS.
 		if ( is_array( $native )
 			&& ( $this->payload_hash( $native ) === $this->payload_hash( $record->payload() )
-				|| $this->native_style_is_builder_handoff( $native, $record->payload() ) )
+				|| $this->native_style_matches_payload( $native, $record->payload() ) )
 		) {
 			unset( $next[ $style_id ] );
 		}
@@ -1771,10 +1822,37 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		return $matches;
 	}
 
-	private function has_legacy_style_marker( string $style_id, array $payload ): bool {
-		$collection = (string) ( $payload['collection'] ?? '' );
+	/**
+	 * @param array<array-key, mixed> $native Persisted etch_styles entry.
+	 */
+	private function has_legacy_style_marker( string $style_id, array $native ): bool {
+		$collection = (string) ( $native['collection'] ?? '' );
 
 		return 1 === preg_match( '/^(?:omide|clayo)-/', $style_id ) || str_starts_with( $collection, 'OhMyIDEtch' );
+	}
+
+	/**
+	 * Whether a legacy native style is exactly the compiled payload, allowing
+	 * only the move from a legacy Builder collection to `default`. The next
+	 * apply then rewrites the native style into `default` under the same ID.
+	 *
+	 * @param array<array-key, mixed> $native  Persisted etch_styles entry.
+	 * @param array<string, mixed>    $payload Compiled style payload.
+	 */
+	private function native_matches_legacy_payload( array $native, array $payload ): bool {
+		if ( $native === $payload ) {
+			return true;
+		}
+
+		if ( EditorStyleDuplicates::EDITOR_COLLECTION !== ( $payload['collection'] ?? null )
+			|| ! EditorStyleDuplicates::is_legacy_builder_collection( $native['collection'] ?? null )
+		) {
+			return false;
+		}
+
+		$native['collection'] = $payload['collection'];
+
+		return $native === $payload;
 	}
 
 	private function find_loop_preset( string $identity ): ?SitePersistenceRecord {

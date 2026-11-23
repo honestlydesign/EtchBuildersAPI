@@ -1030,6 +1030,36 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit {
 		 * @runInSeparateProcess
 		 * @preserveGlobalState disabled
 		 */
+		public function test_legacy_ownership_migration_accepts_a_legacy_collection_and_the_next_apply_moves_it_to_default(): void {
+			$this->install_wordpress_option_stubs();
+			$legacy = array(
+				'selector'   => '.legacy',
+				'collection' => 'OhMyIDEtch:entity:component:Legacy',
+				'css'        => 'color:red;',
+				'type'       => 'class',
+			);
+			$GLOBALS['etch_builders_site_persistence_options'] = array( 'etch_styles' => array( 'legacy' => $legacy ) );
+			$GLOBALS['etch_builders_site_persistence_posts']   = array();
+			$GLOBALS['etch_builders_site_persistence_meta']    = array();
+
+			// Builders 2.1.1 compiles the same style into the default collection.
+			$style = CompiledSiteResource::new( CompiledSiteResourceType::STYLE, 'style:legacy', array_merge( $legacy, array( 'collection' => 'default' ) ) );
+			$plan  = CompiledSitePlan::from_sections(
+				styles: array( $style ),
+				ownership: array( CompiledSiteOwnership::new( 'site:root', $style->identity(), 'style' ) )
+			);
+			$persistence = new WordPressSitePersistence();
+
+			self::assertTrue( $persistence->migrate_legacy_ownership( $plan )->is_success() );
+
+			self::assertSame( array( 'updated' ), $this->outcomes( $persistence->apply( $plan ) ), 'The migrated style is rewritten, not reported as a conflict.' );
+			self::assertSame( $style->payload(), $GLOBALS['etch_builders_site_persistence_options']['etch_styles']['legacy'] );
+		}
+
+		/**
+		 * @runInSeparateProcess
+		 * @preserveGlobalState disabled
+		 */
 		public function test_legacy_ownership_migration_does_not_adopt_an_unmarked_bem_style(): void {
 			$this->install_wordpress_option_stubs();
 			$GLOBALS['etch_builders_site_persistence_options'] = array(

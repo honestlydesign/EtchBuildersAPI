@@ -9,15 +9,25 @@ declare( strict_types=1 );
 
 namespace HonestlyDesign\EtchBuilders;
 
+use HonestlyDesign\EtchBuilders\Support\EditorStyleDuplicates;
 use InvalidArgumentException;
 use Throwable;
 
 /**
  * Owns co-located CSS for one Site Entity and issues exact class references.
+ *
+ * Styles are written to Etch's `default` collection, where the Etch editor
+ * looks classes up, so pasting, moving, or editing an element links the
+ * code-owned style instead of creating an empty copy. Ownership is never read
+ * from the collection: within a request the Style registry records the entity
+ * as owner, and across requests the compiled resource ledger records the
+ * style as Builder-owned. Records still in a legacy
+ * `OhMyIDEtch:entity:<entityId>` collection (Builders 2.1.0 and earlier) keep
+ * naming their entity until the next apply moves them to `default`.
  */
 final class EntityStyleSet {
 
-	private const COLLECTION_PREFIX = 'OhMyIDEtch:entity:';
+	private const COLLECTION = 'default';
 
 	/**
 	 * @param array<string, ClassStyleReference> $class_references References keyed by exact selector.
@@ -35,12 +45,13 @@ final class EntityStyleSet {
 	public static function from_file( string $entity_id, string $file_path ): self {
 		$entity_id = self::validate_entity_id( $entity_id );
 		$references = array();
-		$collection = self::COLLECTION_PREFIX . $entity_id;
 		$style_state = Style::snapshot_state();
 
 		try {
 			$parsed_styles = StylesParser::new( $file_path )->get_all();
-			Style::forget_registered_collection( $collection );
+			// Styles this entity already registered in this request stay its own on reload.
+			$reloaded = array_fill_keys( Style::registered_ids_for_owner( $entity_id ), true );
+			Style::forget_registered_owner( $entity_id );
 
 			foreach ( $parsed_styles as $style ) {
 				$record   = $style->to_array();
@@ -48,10 +59,11 @@ final class EntityStyleSet {
 					? StylesParserRuleScanner::normalize_selector_key( $record['selector'] )
 					: '';
 				$style_id = isset( $record['id'] ) && is_string( $record['id'] ) ? $record['id'] : '';
-				self::assert_style_owner_available( $style_id, $collection );
+				self::assert_style_owner_available( $style_id, $entity_id, isset( $reloaded[ $style_id ] ) );
 
 				$style_id = $style
-					->collection( $collection )
+					->collection( self::COLLECTION )
+					->owner( $entity_id )
 					->overwrite_on_register( true )
 					->add();
 
@@ -66,7 +78,6 @@ final class EntityStyleSet {
 
 		return new self( $entity_id, $references );
 	}
-
 	/**
 	 * Return the exact stable Site Entity identity owning this set.
 	 */
@@ -138,49 +149,73 @@ final class EntityStyleSet {
 
 	/**
 	 * Refuse implicit adoption of request-local or persisted styles.
+	 *
+	 * A request-local style must already belong to this entity. A persisted
+	 * style must be Builder-written: recorded in the compiled resource ledger
+	 * for the same selector, still in this entity's legacy collection, or
+	 * registered by this entity earlier in the request. A style in another
+	 * entity's legacy collection, or one no Builders-owned state records (a
+	 * person's style), is refused.
 	 */
-	private static function assert_style_owner_available( string $style_id, string $expected_collection ): void {
-		$registered = Style::registered_styles();
-		if ( array_key_exists( $style_id, $registered ) ) {
-			self::assert_record_owner( $style_id, $registered[ $style_id ], $expected_collection, 'request-local' );
+	private static function assert_style_owner_available( string $style_id, string $entity_id, bool $reloaded ): void {
+		if ( array_key_exists( $style_id, Style::registered_styles() ) ) {
+			$owner = Style::registered_owner( $style_id );
+			if ( $entity_id !== $owner ) {
+				$collection = Style::registered_styles()[ $style_id ]['collection'];
+				throw new InvalidArgumentException(
+					sprintf(
+						'Style ID "%s" is request-local-owned by %s and cannot be adopted by entity "%s".',
+						$style_id,
+						null !== $owner ? sprintf( 'entity "%s"', $owner ) : sprintf( 'collection "%s"', $collection ),
+						$entity_id
+					)
+				);
+			}
 		}
 
 		$persisted = Environment::storage()->get( 'etch_styles', array() );
-		if ( is_array( $persisted ) && array_key_exists( $style_id, $persisted ) ) {
-			$record = $persisted[ $style_id ];
-			if ( ! is_array( $record ) ) {
+		if ( ! is_array( $persisted ) || ! array_key_exists( $style_id, $persisted ) ) {
+			return;
+		}
+
+		$record = $persisted[ $style_id ];
+		if ( ! is_array( $record ) ) {
+			throw new InvalidArgumentException(
+				sprintf( 'Style ID "%s" has malformed persisted ownership and cannot be adopted by entity "%s".', $style_id, $entity_id )
+			);
+		}
+
+		$legacy_owner = EditorStyleDuplicates::legacy_entity_owner( $record );
+		if ( null !== $legacy_owner ) {
+			if ( $entity_id !== $legacy_owner ) {
 				throw new InvalidArgumentException(
-					sprintf( 'Style ID "%s" has malformed persisted ownership and cannot be adopted by "%s".', $style_id, $expected_collection )
+					sprintf(
+						'Style ID "%s" is persisted-owned by entity "%s" (collection "%s") and cannot be adopted by entity "%s".',
+						$style_id,
+						$legacy_owner,
+						(string) $record['collection'],
+						$entity_id
+					)
 				);
 			}
 
-			self::assert_record_owner( $style_id, $record, $expected_collection, 'persisted' );
+			return;
 		}
-	}
 
-	/**
-	 * @param array<string, mixed> $record Effective style record.
-	 */
-	private static function assert_record_owner(
-		string $style_id,
-		array $record,
-		string $expected_collection,
-		string $source
-	): void {
-		$collection = isset( $record['collection'] ) && is_string( $record['collection'] )
-			? $record['collection']
-			: '(unowned)';
-
-		if ( $expected_collection !== $collection ) {
-			throw new InvalidArgumentException(
-				sprintf(
-					'Style ID "%s" is %s-owned by collection "%s" and cannot be adopted by "%s".',
-					$style_id,
-					$source,
-					$collection,
-					$expected_collection
-				)
-			);
+		$ledger = EditorStyleDuplicates::ledger_selectors(
+			Environment::storage()->get( EditorStyleDuplicates::RESOURCES_OPTION, array() )
+		);
+		if ( $reloaded || EditorStyleDuplicates::is_recorded( $ledger, $style_id, $record ) ) {
+			return;
 		}
+
+		throw new InvalidArgumentException(
+			sprintf(
+				'Style ID "%s" is persisted-owned by collection "%s" and is not a recorded code-owned style, so it cannot be adopted by entity "%s".',
+				$style_id,
+				isset( $record['collection'] ) && is_string( $record['collection'] ) ? $record['collection'] : '(unowned)',
+				$entity_id
+			)
+		);
 	}
 }

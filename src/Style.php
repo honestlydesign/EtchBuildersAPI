@@ -48,9 +48,22 @@ final class Style {
 	 * Style identities claimed during the current request, including registry entries
 	 * later evicted because another ID took ownership of the same selector.
 	 *
-	 * @var array<array-key, array{selector: string, type: string, collection: string}>
+	 * @var array<array-key, array{selector: string, type: string, owner: string|null}>
 	 */
 	private static array $claimed_identities = array();
+
+	/**
+	 * Request-local owner of each registered style, keyed by style ID.
+	 *
+	 * Ownership is Builders-owned state, never the Etch collection: every
+	 * code-owned style is written to the `default` collection so the Etch
+	 * editor links it. Entity Style Sets record their entity identity here.
+	 * Styles registered with a legacy `OhMyIDEtch:entity:<id>` collection and
+	 * no explicit owner are owned by that entity, as before 2.1.1.
+	 *
+	 * @var array<string, string>
+	 */
+	private static array $owners = array();
 
 	/**
 	 * Existing persisted IDs linked during this request.
@@ -58,7 +71,10 @@ final class Style {
 	 * Retention prevents legacy orphan cleanup without importing, adopting, or
 	 * rewriting the persisted definition through the request-local registry.
 	 *
-	 * @var array<array-key, array{selector: string, type: string, collection: string}>
+	 * The owner is only known for records still in a legacy entity collection;
+	 * newer records are never released by an owner reload.
+	 *
+	 * @var array<array-key, array{selector: string, type: string, owner: string|null}>
 	 */
 	private static array $retained_persisted_identities = array();
 
@@ -69,7 +85,7 @@ final class Style {
 	 * heuristic. A released record is removable only while its full persisted
 	 * payload is unchanged.
 	 *
-	 * @var array<array-key, array{selector: string, type: string, collection: string, payload: array<string, mixed>}>
+	 * @var array<array-key, array{selector: string, type: string, owner: string|null, payload: array<string, mixed>}>
 	 */
 	private static array $released_persisted_identities = array();
 
@@ -151,6 +167,11 @@ final class Style {
 	 * @var string|null
 	 */
 	private ?string $collection = null;
+
+	/**
+	 * Request-local owner identity, when one was supplied.
+	 */
+	private ?string $owner = null;
 
 	/**
 	 * Constructor.
@@ -295,6 +316,20 @@ final class Style {
 	}
 
 	/**
+	 * Record the request-local owner of this style.
+	 *
+	 * The owner is kept beside the registry, never in the persisted Etch
+	 * record, so it does not change the collection or the compiled payload.
+	 *
+	 * @internal EntityStyleSet records its entity identity here.
+	 * @param string $owner Owner identity, such as an Entity Style Set identity.
+	 */
+	public function owner( string $owner ): self {
+		$this->owner = $owner;
+		return $this;
+	}
+
+	/**
 	 * Validate and add this style to the registry.
 	 *
 	 * @return string Registered style ID.
@@ -334,16 +369,23 @@ final class Style {
 			$style['overwrite_on_register'] = $this->overwrite_on_register;
 		}
 
+		$owner = $this->owner ?? EditorStyleDuplicates::legacy_entity_owner_of_collection( $style['collection'] );
+
 		self::$claimed_identities[ $style_id ] = array(
-			'selector'   => $selector,
-			'type'       => $resolved_type,
-			'collection' => $style['collection'],
+			'selector' => $selector,
+			'type'     => $resolved_type,
+			'owner'    => $owner,
 		);
 		unset( self::$released_persisted_identities[ $style_id ] );
 
 		self::remove_registry_selector_conflicts( $style_id, $selector );
 
 		self::$registry[ $style_id ] = $style;
+		if ( null === $owner ) {
+			unset( self::$owners[ $style_id ] );
+		} else {
+			self::$owners[ $style_id ] = $owner;
+		}
 
 		return $style_id;
 	}
@@ -499,6 +541,7 @@ final class Style {
 	public static function reset(): void {
 		self::$registry                        = array();
 		self::$claimed_identities              = array();
+		self::$owners                          = array();
 		self::$retained_persisted_identities    = array();
 		self::$released_persisted_identities    = array();
 	}
@@ -517,15 +560,17 @@ final class Style {
 	 *
 	 * @return array{
 	 *     registry: array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
-	 *     claimed_identities: array<array-key, array{selector: string, type: string, collection: string}>,
-	 *     retained_persisted_identities: array<array-key, array{selector: string, type: string, collection: string}>,
-	 *     released_persisted_identities: array<array-key, array{selector: string, type: string, collection: string, payload: array<string, mixed>}>
+	 *     claimed_identities: array<array-key, array{selector: string, type: string, owner: string|null}>,
+	 *     retained_persisted_identities: array<array-key, array{selector: string, type: string, owner: string|null}>,
+	 *     released_persisted_identities: array<array-key, array{selector: string, type: string, owner: string|null, payload: array<string, mixed>}>,
+	 *     owners: array<string, string>
 	 * }
 	 */
 	public static function snapshot_state(): array {
 		return array(
 			'registry'                      => self::$registry,
 			'claimed_identities'            => self::$claimed_identities,
+			'owners'                        => self::$owners,
 			'retained_persisted_identities' => self::$retained_persisted_identities,
 			'released_persisted_identities' => self::$released_persisted_identities,
 		);
@@ -539,16 +584,26 @@ final class Style {
 	 * @param array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}> $registry Style registry snapshot.
 	 */
 	public static function restore( array $registry ): void {
+		$previous_owners                     = self::$owners;
 		self::$registry                        = $registry;
 		self::$claimed_identities              = array();
+		self::$owners                          = array();
 		self::$retained_persisted_identities    = array();
 		self::$released_persisted_identities    = array();
 
 		foreach ( $registry as $style_id => $style ) {
-			self::$claimed_identities[ (string) $style_id ] = array(
-				'selector'   => $style['selector'],
-				'type'       => $style['type'],
-				'collection' => $style['collection'],
+			$style_id = (string) $style_id;
+			// A registry snapshot carries no owner map: keep the owner a style
+			// still has in this request, else read a legacy entity collection.
+			$owner = $previous_owners[ $style_id ] ?? EditorStyleDuplicates::legacy_entity_owner_of_collection( $style['collection'] );
+			if ( null !== $owner ) {
+				self::$owners[ $style_id ] = $owner;
+			}
+
+			self::$claimed_identities[ $style_id ] = array(
+				'selector' => $style['selector'],
+				'type'     => $style['type'],
+				'owner'    => $owner,
 			);
 		}
 	}
@@ -558,14 +613,16 @@ final class Style {
 	 *
 	 * @param array{
 	 *     registry: array<array-key, array{selector: string, collection: string, css: string, type: string, readonly?: bool, overwrite_on_register?: bool, name?: string}>,
-	 *     claimed_identities: array<array-key, array{selector: string, type: string, collection: string}>,
-	 *     retained_persisted_identities?: array<array-key, array{selector: string, type: string, collection: string}>,
-	 *     released_persisted_identities?: array<array-key, array{selector: string, type: string, collection: string, payload: array<string, mixed>}>
+	 *     claimed_identities: array<array-key, array{selector: string, type: string, owner: string|null}>,
+	 *     retained_persisted_identities?: array<array-key, array{selector: string, type: string, owner: string|null}>,
+	 *     released_persisted_identities?: array<array-key, array{selector: string, type: string, owner: string|null, payload: array<string, mixed>}>,
+	 *     owners?: array<string, string>
 	 * } $state Complete style state snapshot.
 	 */
 	public static function restore_state( array $state ): void {
 		self::$registry                     = $state['registry'];
 		self::$claimed_identities           = $state['claimed_identities'];
+		self::$owners                       = $state['owners'] ?? array();
 		self::$retained_persisted_identities = $state['retained_persisted_identities'] ?? array();
 		self::$released_persisted_identities = $state['released_persisted_identities'] ?? array();
 	}
@@ -593,15 +650,11 @@ final class Style {
 		}
 
 		self::assert_style_identity_matches_persisted( $style_id, $selector, $type, $persisted );
-		$persisted_style = $persisted[ $style_id ];
-		$collection      = is_array( $persisted_style ) && isset( $persisted_style['collection'] ) && is_string( $persisted_style['collection'] )
-			? $persisted_style['collection']
-			: '';
 
 		self::$retained_persisted_identities[ $style_id ] = array(
-			'selector'   => $selector,
-			'type'       => $type,
-			'collection' => $collection,
+			'selector' => $selector,
+			'type'     => $type,
+			'owner'    => EditorStyleDuplicates::legacy_entity_owner( $persisted[ $style_id ] ),
 		);
 	}
 
@@ -628,35 +681,66 @@ final class Style {
 	}
 
 	/**
-	 * Remove one exact owner's request-local collection before atomic replacement.
+	 * Return the request-local owner of a registered style, if it has one.
+	 *
+	 * @internal
+	 */
+	public static function registered_owner( string $style_id ): ?string {
+		return isset( self::$registry[ $style_id ] ) ? ( self::$owners[ $style_id ] ?? null ) : null;
+	}
+
+	/**
+	 * Return the IDs of registered styles owned by one exact owner.
+	 *
+	 * @internal
+	 * @return array<int, string>
+	 */
+	public static function registered_ids_for_owner( string $owner ): array {
+		$ids = array();
+		foreach ( array_keys( self::$registry ) as $style_id ) {
+			if ( $owner === ( self::$owners[ (string) $style_id ] ?? null ) ) {
+				$ids[] = (string) $style_id;
+			}
+		}
+
+		return $ids;
+	}
+
+	/**
+	 * Remove one exact owner's request-local styles before atomic replacement.
+	 *
+	 * Matches the owner map, never the collection: every code-owned style
+	 * shares the `default` collection with other entities and with Etch's
+	 * own styles, which must stay registered.
 	 *
 	 * @internal EntityStyleSet owns the public replacement operation.
 	 */
-	public static function forget_registered_collection( string $collection ): void {
-		foreach ( self::$registry as $style_id => $style ) {
-			if ( $collection !== $style['collection'] ) {
+	public static function forget_registered_owner( string $owner ): void {
+		foreach ( array_keys( self::$registry ) as $style_id ) {
+			$style_id = (string) $style_id;
+			if ( $owner !== ( self::$owners[ $style_id ] ?? null ) ) {
 				continue;
 			}
 
-			unset( self::$registry[ $style_id ] );
+			unset( self::$registry[ $style_id ], self::$owners[ $style_id ] );
 		}
 
 		foreach ( self::$claimed_identities as $style_id => $identity ) {
-			if ( $collection === $identity['collection'] ) {
+			if ( $owner === $identity['owner'] ) {
 				unset( self::$claimed_identities[ $style_id ] );
 			}
 		}
 
 		$persisted = Environment::storage()->get( self::STYLES_OPTION_NAME, array() );
 		foreach ( self::$retained_persisted_identities as $style_id => $identity ) {
-			if ( $collection === $identity['collection'] ) {
+			if ( $owner === $identity['owner'] ) {
 				$persisted_style = is_array( $persisted ) ? ( $persisted[ $style_id ] ?? null ) : null;
 				if ( is_array( $persisted_style ) ) {
 					self::$released_persisted_identities[ $style_id ] = array(
-						'selector'   => $identity['selector'],
-						'type'       => $identity['type'],
-						'collection' => $identity['collection'],
-						'payload'    => $persisted_style,
+						'selector' => $identity['selector'],
+						'type'     => $identity['type'],
+						'owner'    => $identity['owner'],
+						'payload'  => $persisted_style,
 					);
 				}
 				unset( self::$retained_persisted_identities[ $style_id ] );
@@ -708,7 +792,9 @@ final class Style {
 				continue;
 			}
 
-			$recorded = isset( $ledger[ $style_id ] ) || EditorStyleDuplicates::is_code_collection( $style );
+			// Builder authorship comes from the ledger. A record still in a
+			// legacy entity collection was written by Builders 2.1.0 or earlier.
+			$recorded = isset( $ledger[ $style_id ] ) || EditorStyleDuplicates::is_legacy_entity_collection( $style );
 			if ( ! $recorded && EditorStyleDuplicates::is_editor_collection( $style ) ) {
 				$editor_duplicates[ $style_id ] = $style;
 				continue;
@@ -746,8 +832,17 @@ final class Style {
 		if ( count( $matching_ids ) > 1 ) {
 			$described = array();
 			foreach ( $matching_ids as $matching_id ) {
-				$collection = $persisted[ $matching_id ]['collection'] ?? ( isset( $ledger[ $matching_id ] ) ? 'recorded code-owned style' : '(none)' );
-				$described[] = sprintf( '%s (collection %s)', $matching_id, is_string( $collection ) ? $collection : '(none)' );
+				// Code-owned styles share the default collection, so name the owner instead.
+				$matching_id = (string) $matching_id;
+				$owner       = self::registered_owner( $matching_id ) ?? EditorStyleDuplicates::legacy_entity_owner( $persisted[ $matching_id ] ?? null );
+				$collection  = $persisted[ $matching_id ]['collection'] ?? ( self::$registry[ $matching_id ]['collection'] ?? null );
+				if ( null !== $owner ) {
+					$described[] = sprintf( '%s (code-owned by %s)', $matching_id, $owner );
+				} elseif ( isset( $ledger[ $matching_id ] ) ) {
+					$described[] = sprintf( '%s (code-owned)', $matching_id );
+				} else {
+					$described[] = sprintf( '%s (collection %s)', $matching_id, is_string( $collection ) ? $collection : '(none)' );
+				}
 			}
 
 			throw new RuntimeException(
@@ -1211,7 +1306,7 @@ final class Style {
 			}
 
 			if ( trim( $existing_style['selector'] ) === $selector ) {
-				unset( self::$registry[ $existing_style_id ] );
+				unset( self::$registry[ $existing_style_id ], self::$owners[ (string) $existing_style_id ] );
 			}
 		}
 	}
