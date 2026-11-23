@@ -93,6 +93,13 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	private bool $adopt_existing = false;
 
 	/**
+	 * Whether compiled Site applies may take back content handed over to editors.
+	 *
+	 * @var bool
+	 */
+	private bool $reclaim_from_editors = false;
+
+	/**
 	 * Content buffer.
 	 *
 	 * @var ContentBuffer
@@ -287,9 +294,11 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 * A compiled Site apply creates the native record when it is missing and
 	 * never writes it again: later applies leave edits made in WordPress and
 	 * later code changes alike untouched, and report the record as unchanged.
-	 * Class styles and stylesheets the content uses stay code-owned. Calling
-	 * it with false returns the record to normal code ownership, so the next
-	 * apply writes the compiled content again.
+	 * Class styles and stylesheets the content uses stay code-owned. Content
+	 * an editor renamed, trashed, or deleted is not created again. To manage
+	 * the content from code again, remove this call and add
+	 * reclaim_from_editors(); without it the apply reports a conflict and
+	 * keeps the editors' version.
 	 *
 	 * @param bool $hand_over Whether to hand the content over after creating it.
 	 * @authoring-contract-version 1.0
@@ -314,8 +323,10 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 * not create and reports a conflict. With this flag the apply claims the
 	 * record when exactly one matching record exists that the Builder does
 	 * not own and that is not a translation. Managed content is then
-	 * overwritten with the compiled version (WordPress keeps a revision);
-	 * content that is also handed over keeps its current WordPress content.
+	 * overwritten with the compiled version; adoption is refused for post
+	 * types without revisions unless the content already matches, so the
+	 * earlier version stays recoverable. Content that is also handed over
+	 * keeps its current WordPress content.
 	 *
 	 * @param bool $adopt Whether to adopt an existing record.
 	 * @authoring-contract-version 1.0
@@ -331,6 +342,32 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 */
 	public function adopts_existing(): bool {
 		return $this->adopt_existing;
+	}
+
+	/**
+	 * Take back content an earlier apply handed over to editors.
+	 *
+	 * Without this flag, content that was handed over stays with editors
+	 * even after hand_over_after_create() is removed: the apply reports a
+	 * conflict instead of overwriting their work. With it, the next apply
+	 * replaces the editors' version with the code version, and content an
+	 * editor renamed, trashed, or deleted is created again. Remove the flag
+	 * once the content is managed by code again.
+	 *
+	 * @param bool $reclaim Whether to reclaim handed-over content.
+	 * @authoring-contract-version 1.0
+	 */
+	public function reclaim_from_editors( bool $reclaim = true ): static {
+		$this->reclaim_from_editors = $reclaim;
+
+		return $this;
+	}
+
+	/**
+	 * Whether compiled Site applies may take back content handed over to editors.
+	 */
+	public function reclaims_from_editors(): bool {
+		return $this->reclaim_from_editors;
 	}
 
 	/**

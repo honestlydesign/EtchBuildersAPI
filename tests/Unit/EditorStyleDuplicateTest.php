@@ -209,6 +209,80 @@ final class EditorStyleDuplicateTest extends TestCase {
 	 * @runInSeparateProcess
 	 * @preserveGlobalState disabled
 	 */
+	public function test_removing_the_code_owned_style_gives_a_person_back_the_identical_style_they_wrote(): void {
+		$this->install_wordpress();
+		$written = array( 'type' => 'class', 'selector' => '.site-nav', 'collection' => 'default', 'css' => 'display: flex;', 'readonly' => false );
+		$GLOBALS['etch_builders_site_persistence_options']['etch_styles'] = array( 'h4nd' => $written );
+		$persistence = new WordPressSitePersistence();
+		$persistence->apply( $this->plan() );
+		self::assertSame( 'display: flex', $this->option( 'etch_styles' )['h4nd']['css'], 'The identical style was adopted as a mirror.' );
+
+		$persistence->apply( CompiledSitePlan::empty() );
+
+		self::assertSame( $written, $this->option( 'etch_styles' )['h4nd'] );
+	}
+
+	/**
+	 * @runInSeparateProcess
+	 * @preserveGlobalState disabled
+	 */
+	public function test_removing_a_code_style_the_editor_resaved_removes_it_and_returns_its_mirror(): void {
+		$this->install_wordpress();
+		$persistence = new WordPressSitePersistence();
+		$persistence->apply( $this->plan() );
+		$GLOBALS['etch_builders_site_persistence_options']['etch_styles']['4ndy1la'] = $this->editor_placeholder();
+		$persistence->apply( $this->plan() );
+		// An Etch editor save after the last apply drops the internal flag on every style.
+		unset( $GLOBALS['etch_builders_site_persistence_options']['etch_styles']['component-site-nav']['overwrite_on_register'] );
+		$GLOBALS['etch_builders_site_persistence_options']['etch_styles']['component-site-nav']['readonly'] = false;
+
+		$report = $persistence->apply( CompiledSitePlan::empty() );
+
+		self::assertTrue( $report->is_success() );
+		$styles = $this->option( 'etch_styles' );
+		self::assertArrayNotHasKey( 'component-site-nav', $styles );
+		self::assertSame( $this->editor_placeholder(), $styles['4ndy1la'] );
+	}
+
+	/**
+	 * @runInSeparateProcess
+	 * @preserveGlobalState disabled
+	 */
+	public function test_a_mirror_keeps_its_css_while_a_code_style_a_person_changed_stays(): void {
+		$this->install_wordpress();
+		$persistence = new WordPressSitePersistence();
+		$persistence->apply( $this->plan() );
+		$GLOBALS['etch_builders_site_persistence_options']['etch_styles']['4ndy1la'] = $this->editor_placeholder();
+		$persistence->apply( $this->plan() );
+		$GLOBALS['etch_builders_site_persistence_options']['etch_styles']['component-site-nav']['css'] = 'display: grid';
+
+		$persistence->apply( CompiledSitePlan::empty() );
+
+		$styles = $this->option( 'etch_styles' );
+		self::assertSame( 'display: grid', $styles['component-site-nav']['css'] );
+		self::assertSame( 'display: flex', $styles['4ndy1la']['css'], 'Elements linked to the mirror keep rendering while the selector still has CSS.' );
+	}
+
+	/**
+	 * @runInSeparateProcess
+	 * @preserveGlobalState disabled
+	 */
+	public function test_a_complete_plan_with_nothing_to_write_still_waits_for_the_apply_lock_before_cleaning_up(): void {
+		$this->install_wordpress();
+		$persistence = new WordPressSitePersistence();
+		$persistence->apply( $this->plan() );
+		$GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_apply_lock'] = 'honestlydesign/etch-builders:' . time();
+
+		$report = $persistence->apply( CompiledSitePlan::empty() );
+
+		self::assertFalse( $report->is_success() );
+		self::assertArrayHasKey( 'component-site-nav', $this->option( 'etch_styles' ), 'Another apply holds the lock, so nothing may be cleaned up.' );
+	}
+
+	/**
+	 * @runInSeparateProcess
+	 * @preserveGlobalState disabled
+	 */
 	public function test_an_unrecorded_exact_style_in_its_own_collection_is_adopted_after_the_editor_dropped_its_flag(): void {
 		$this->install_wordpress();
 		$native = $this->owned_payload();

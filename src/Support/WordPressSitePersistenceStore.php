@@ -84,7 +84,33 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 
 	private const CONTENT_IDENTITY_META = 'etch_builders_site_persistence_identity';
 
-	private const HANDED_OVER_META = 'etch_builders_site_persistence_handed_over';
+	/**
+	 * Owner value of content handed over to editors. It differs from
+	 * OWNER_VALUE on purpose: package versions before 2.1 see the record as
+	 * unowned and report a conflict instead of overwriting editor work.
+	 */
+	private const HANDED_OVER_OWNER_VALUE = 'honestlydesign/etch-builders#handed-over';
+
+	/** Identities handed over to editors, mapped to their post ID, kept after renames and deletions. */
+	private const HANDED_OVER_OPTION = 'etch_builders_site_persistence_handed_over';
+
+	/** Digest of the complete plan the last fully successful apply wrote. */
+	private const COMPLETE_PLAN_OPTION = 'etch_builders_site_persistence_complete_plan';
+
+	/** Package filter: `(array<int> $post_ids)`, extra post IDs that orphan retirement must never draft. */
+	private const PROTECTED_IDS_FILTER = 'etch_builders_site_persistence_protected_post_ids';
+
+	/** Options WordPress core and WooCommerce use to point at special pages. */
+	private const PROTECTED_PAGE_OPTIONS = array(
+		'page_on_front',
+		'page_for_posts',
+		'wp_page_for_privacy_policy',
+		'woocommerce_shop_page_id',
+		'woocommerce_cart_page_id',
+		'woocommerce_checkout_page_id',
+		'woocommerce_myaccount_page_id',
+		'woocommerce_terms_page_id',
+	);
 
 	private const RETIRED_STATUS_META = 'etch_builders_site_persistence_retired_status';
 
@@ -1422,6 +1448,8 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 			$next_aliases[ $duplicate_id ] = array(
 				'canonical' => $canonical_id,
 				'hash'      => EditorStyleDuplicates::payload_hash( $mirror ),
+				// Keep what the duplicate held before the first adoption, so removing the code style can give it back.
+				'original'  => null !== $alias && $canonical_id === $alias['canonical'] && isset( $alias['original'] ) ? $alias['original'] : $duplicate,
 			);
 			if ( null !== $alias && $canonical_id === $alias['canonical'] && $mirror === $duplicate ) {
 				// The editor re-saved an unchanged mirror; only the tracking hash moves.
@@ -1554,13 +1582,21 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		$style_id = substr( $record->identity(), strlen( 'style:' ) );
 		$next     = $styles;
 		$native   = $styles[ $style_id ] ?? null;
-		if ( is_array( $native ) && $this->payload_hash( $native ) === $this->payload_hash( $record->payload() ) ) {
+		// The Etch editor drops the internal ownership flag whenever it saves,
+		// so an otherwise unchanged code style still counts as unchanged.
+		if ( is_array( $native )
+			&& ( $this->payload_hash( $native ) === $this->payload_hash( $record->payload() )
+				|| $this->native_style_is_builder_handoff( $native, $record->payload() ) )
+		) {
 			unset( $next[ $style_id ] );
 		}
+		$removed = ! array_key_exists( $style_id, $next );
 
-		// Mirrors of the removed style go back to the empty editor style Etch
-		// created, so elements linked to them keep a valid style reference.
-		// A mirror a person edited since it was adopted is only released.
+		// Mirrors of a removed style get back what they held before their
+		// first adoption: the empty editor style Etch created, or the CSS a
+		// person wrote. Elements linked to them keep a valid style reference.
+		// A mirror a person edited since it was adopted, or the mirror of a
+		// code style that stays because a person changed it, is only released.
 		$stored_aliases = \get_option( EditorStyleDuplicates::ALIASES_OPTION, array() );
 		$next_aliases   = EditorStyleDuplicates::aliases( $stored_aliases );
 		foreach ( $next_aliases as $alias_id => $alias ) {
@@ -1568,9 +1604,13 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 				continue;
 			}
 			$mirror = $next[ $alias_id ] ?? null;
-			if ( is_array( $mirror ) && EditorStyleDuplicates::payload_hash( $mirror ) === $alias['hash'] ) {
-				$mirror['css']      = '';
-				$next[ $alias_id ] = $mirror;
+			if ( $removed && is_array( $mirror ) && EditorStyleDuplicates::payload_hash( $mirror ) === $alias['hash'] ) {
+				if ( isset( $alias['original'] ) ) {
+					$next[ $alias_id ] = $alias['original'];
+				} else {
+					$mirror['css']     = '';
+					$next[ $alias_id ] = $mirror;
+				}
 			}
 			unset( $next_aliases[ $alias_id ] );
 		}
@@ -2154,9 +2194,9 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 
 	/** {@inheritdoc} */
 	/**
-	 * The single Builder-owned, non-translation native post for one content identity.
+	 * The single non-translation native post for one content identity with the given owner value.
 	 */
-	private function owned_native_post( string $identity ): ?object {
+	private function owned_native_post( string $identity, string $owner = self::OWNER_VALUE ): ?object {
 		$kind = $this->native_kind( $identity );
 		if ( null === $kind || ! $this->is_native_post_kind( $kind ) ) {
 			return null;
@@ -2169,7 +2209,31 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 
 		$post = $lookup['posts'][0];
 
-		return self::OWNER_VALUE === (string) \get_post_meta( $this->post_id( $post ), self::OWNER_META, true ) ? $post : null;
+		return $owner === (string) \get_post_meta( $this->post_id( $post ), self::OWNER_META, true ) ? $post : null;
+	}
+
+	/**
+	 * @return array<string, int>
+	 */
+	private function handed_over_identities(): array {
+		$stored = \function_exists( 'get_option' ) ? \get_option( self::HANDED_OVER_OPTION, array() ) : array();
+		$map    = array();
+		foreach ( is_array( $stored ) ? $stored : array() as $identity => $post_id ) {
+			if ( is_string( $identity ) && '' !== $identity ) {
+				$map[ $identity ] = (int) $post_id;
+			}
+		}
+
+		return $map;
+	}
+
+	/**
+	 * @param array<string, int> $map
+	 */
+	private function store_handed_over_identities( array $map ): bool {
+		ksort( $map );
+
+		return $this->update_option_if_changed( self::HANDED_OVER_OPTION, $this->handed_over_identities(), $map );
 	}
 
 	/** {@inheritdoc} */
@@ -2179,34 +2243,68 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 			return false;
 		}
 
-		$post = $this->owned_native_post( $identity );
+		return null !== $this->owned_native_post( $identity, self::HANDED_OVER_OWNER_VALUE );
+	}
 
-		return null !== $post && '' !== (string) \get_post_meta( $this->post_id( $post ), self::HANDED_OVER_META, true );
+	/** {@inheritdoc} */
+	public function was_handed_over( string $identity ): bool {
+		return in_array( $this->native_kind( $identity ), array( 'page', 'post', 'template' ), true )
+			&& array_key_exists( $identity, $this->handed_over_identities() );
 	}
 
 	/** {@inheritdoc} */
 	public function mark_handed_over( string $identity, bool $handed_over ): RegistrationResult {
-		$post = $this->owned_native_post( $identity );
+		$from = $handed_over ? self::OWNER_VALUE : self::HANDED_OVER_OWNER_VALUE;
+		$to   = $handed_over ? self::HANDED_OVER_OWNER_VALUE : self::OWNER_VALUE;
+		$post = $this->owned_native_post( $identity, $from ) ?? $this->owned_native_post( $identity, $to );
 		if ( null === $post ) {
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_MISSING', 'No single Builder-owned native record exists for this identity.' );
 		}
 
 		$post_id = $this->post_id( $post );
-		if ( $handed_over ) {
-			return $this->update_native_meta( $post_id, self::HANDED_OVER_META, '1' )
-				? RegistrationResult::success()
-				: RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_META_FAILED', 'WordPress could not write the hand-over marker.' );
+		if ( ! $this->update_native_meta( $post_id, self::OWNER_META, $to ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_META_FAILED', 'WordPress could not change the content owner.' );
 		}
 
-		\delete_post_meta( $post_id, self::HANDED_OVER_META );
+		$map = $this->handed_over_identities();
+		if ( $handed_over ) {
+			$map[ $identity ] = $post_id;
+		} else {
+			unset( $map[ $identity ] );
+		}
+		if ( ! $this->store_handed_over_identities( $map ) ) {
+			$this->update_native_meta( $post_id, self::OWNER_META, $from );
 
-		return '' === (string) \get_post_meta( $post_id, self::HANDED_OVER_META, true )
-			? RegistrationResult::success()
-			: RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_META_FAILED', 'WordPress could not clear the hand-over marker.' );
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not record the hand-over; the owner was reset.' );
+		}
+
+		return RegistrationResult::success();
 	}
 
 	/** {@inheritdoc} */
-	public function claim_unowned_native_record( SitePersistenceRecord $record ): RegistrationResult {
+	public function forget_hand_over( string $identity ): RegistrationResult {
+		$map = $this->handed_over_identities();
+		unset( $map[ $identity ] );
+
+		return $this->store_handed_over_identities( $map )
+			? RegistrationResult::success()
+			: RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_UPDATE_FAILED', 'WordPress could not forget the hand-over.' );
+	}
+
+	/**
+	 * Native fields a claim snapshots so a failed adoption can put them back.
+	 */
+	private const CLAIM_SNAPSHOT_FIELDS = array( 'post_content', 'post_title', 'post_status', 'post_name', 'post_excerpt' );
+
+	/**
+	 * Content each claim found, keyed by identity, for release_native_claim().
+	 *
+	 * @var array<string, array{post_id: int, fields: array<string, string>}>
+	 */
+	private array $claims = array();
+
+	/** {@inheritdoc} */
+	public function claim_unowned_native_record( SitePersistenceRecord $record, bool $replaces_content = true ): RegistrationResult {
 		$kind = $this->native_kind( $record->identity() );
 		if ( ! in_array( $kind, array( 'page', 'post', 'template' ), true ) ) {
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ADOPTION_UNSUPPORTED', 'Only pages, posts, and templates can adopt existing WordPress content.' );
@@ -2228,7 +2326,8 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 
 		$post      = $lookup['posts'][0];
 		$post_id   = $this->post_id( $post );
-		$post_type = (string) ( get_object_vars( $post )['post_type'] ?? '' );
+		$values    = get_object_vars( $post );
+		$post_type = (string) ( $values['post_type'] ?? '' );
 		$expected  = match ( $kind ) {
 			'page'     => 'page',
 			'template' => 'wp_template',
@@ -2237,15 +2336,35 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		if ( $post_id < 1 || $expected !== $post_type ) {
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_CONFLICT', 'The existing WordPress record has a different post type.' );
 		}
+		// ID lookups are not filtered for translations, so check the claimed post itself.
+		if ( $this->is_translation( $post ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ADOPTION_TRANSLATION', 'This record is a translation; adopt the original content instead.' );
+		}
 		if ( '' !== (string) \get_post_meta( $post_id, self::OWNER_META, true ) ) {
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_CONFLICT', 'The existing WordPress record already has an owner.' );
 		}
+		if ( $replaces_content && ! $this->content_matches( $record, $values ) && ! $this->keeps_revisions( $post, $post_type ) ) {
+			return RegistrationResult::error(
+				'ETCH_SITE_PERSISTENCE_ADOPTION_NO_REVISIONS',
+				'Adopting this record would replace its content, and WordPress keeps no revisions for it, so the current content could not be recovered. Make its content match the code first, enable revisions, or also hand it over with hand_over_after_create() to keep its content.'
+			);
+		}
+
+		$fields = array();
+		foreach ( self::CLAIM_SNAPSHOT_FIELDS as $field ) {
+			$fields[ $field ] = (string) ( $values[ $field ] ?? '' );
+		}
+		$this->claims[ $record->identity() ] = array(
+			'post_id' => $post_id,
+			'fields'  => $fields,
+		);
 
 		if ( ! $this->update_native_meta( $post_id, self::CONTENT_IDENTITY_META, $record->identity() )
 			|| ! $this->update_native_meta( $post_id, self::OWNER_META, self::OWNER_VALUE )
 		) {
 			\delete_post_meta( $post_id, self::OWNER_META );
 			\delete_post_meta( $post_id, self::CONTENT_IDENTITY_META );
+			unset( $this->claims[ $record->identity() ] );
 
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_META_FAILED', 'WordPress could not write the ownership metadata.' );
 		}
@@ -2253,15 +2372,72 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		return RegistrationResult::success();
 	}
 
+	/**
+	 * Whether the compiled content fields already equal the native post.
+	 *
+	 * @param array<string, mixed> $values
+	 */
+	private function content_matches( SitePersistenceRecord $record, array $values ): bool {
+		$payload = $record->payload();
+		if ( (string) ( $payload['blocks'] ?? '' ) !== (string) ( $values['post_content'] ?? '' ) ) {
+			return false;
+		}
+		foreach ( array( 'post_title', 'post_excerpt' ) as $field ) {
+			if ( array_key_exists( $field, $payload ) && \sanitize_text_field( (string) $payload[ $field ] ) !== (string) ( $values[ $field ] ?? '' ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Whether WordPress keeps revisions of this post, so replaced content stays recoverable.
+	 */
+	private function keeps_revisions( object $post, string $post_type ): bool {
+		if ( ! \function_exists( 'post_type_supports' ) || ! \post_type_supports( $post_type, 'revisions' ) ) {
+			return false;
+		}
+
+		return ! \function_exists( 'wp_revisions_enabled' ) || ! $post instanceof \WP_Post || \wp_revisions_enabled( $post );
+	}
+
 	/** {@inheritdoc} */
 	public function release_native_claim( SitePersistenceRecord $record ): RegistrationResult {
-		$post = $this->owned_native_post( $record->identity() );
-		if ( null === $post ) {
+		$claim = $this->claims[ $record->identity() ] ?? null;
+		unset( $this->claims[ $record->identity() ] );
+		if ( null === $claim ) {
 			return RegistrationResult::success();
 		}
 
-		$post_id = $this->post_id( $post );
-		foreach ( array( self::OWNER_META, self::CONTENT_IDENTITY_META, self::SNAPSHOT_META, self::NATIVE_FINGERPRINT_META, self::HANDED_OVER_META ) as $key ) {
+		$post_id = $claim['post_id'];
+		$post    = \get_post( $post_id );
+		$current = is_object( $post ) ? get_object_vars( $post ) : array();
+		$changed = false;
+		foreach ( $claim['fields'] as $field => $value ) {
+			$changed = $changed || (string) ( $current[ $field ] ?? '' ) !== $value;
+		}
+		if ( $changed ) {
+			$fields   = $claim['fields'];
+			$restored = $this->normalize_native_post_id(
+				\wp_update_post(
+					array(
+						'ID'           => $post_id,
+						'post_content' => (string) \wp_slash( $fields['post_content'] ?? '' ),
+						'post_title'   => (string) \wp_slash( $fields['post_title'] ?? '' ),
+						'post_status'  => $fields['post_status'] ?? '',
+						'post_name'    => $fields['post_name'] ?? '',
+						'post_excerpt' => (string) \wp_slash( $fields['post_excerpt'] ?? '' ),
+					),
+					true
+				)
+			);
+			if ( $restored instanceof RegistrationResult ) {
+				return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'A failed adoption replaced the content and WordPress could not put it back; restore it from the revision history.' );
+			}
+		}
+
+		foreach ( array( self::OWNER_META, self::CONTENT_IDENTITY_META, self::SNAPSHOT_META, self::NATIVE_FINGERPRINT_META ) as $key ) {
 			\delete_post_meta( $post_id, $key );
 		}
 
@@ -2286,18 +2462,21 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 				'no_found_rows'    => true,
 				'suppress_filters' => true,
 				'meta_key'         => self::OWNER_META,
-				'meta_value'       => self::OWNER_VALUE,
 			)
 		);
 
-		$front    = \function_exists( 'get_option' ) ? array( (int) \get_option( 'page_on_front', 0 ), (int) \get_option( 'page_for_posts', 0 ) ) : array();
-		$entities = array();
+		$protected = $this->protected_post_ids();
+		$entities  = array();
 		foreach ( $posts as $post ) {
-			if ( ! is_object( $post ) || $this->is_translation( $post ) ) {
+			if ( ! is_object( $post ) ) {
+				continue;
+			}
+			$post_id = $this->post_id( $post );
+			$owner   = (string) \get_post_meta( $post_id, self::OWNER_META, true );
+			if ( ! in_array( $owner, array( self::OWNER_VALUE, self::HANDED_OVER_OWNER_VALUE ), true ) || $this->is_translation( $post ) ) {
 				continue;
 			}
 
-			$post_id   = $this->post_id( $post );
 			$values    = get_object_vars( $post );
 			$post_type = (string) ( $values['post_type'] ?? '' );
 			$identity  = self::BLOCK_POST_TYPE === $post_type
@@ -2311,14 +2490,44 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 			$entities[ $identity ] = array(
 				'identity'    => $identity,
 				'kind'        => $kind,
+				'post_id'     => $post_id,
 				'status'      => (string) ( $values['post_status'] ?? '' ),
-				'handed_over' => '' !== (string) \get_post_meta( $post_id, self::HANDED_OVER_META, true ),
+				'handed_over' => self::HANDED_OVER_OWNER_VALUE === $owner,
 				'retired'     => '' !== (string) \get_post_meta( $post_id, self::RETIRED_STATUS_META, true ),
-				'front_page'  => 'page' === $post_type && in_array( $post_id, $front, true ),
+				'protected'   => isset( $protected[ $post_id ] ),
 			);
 		}
 
 		return array_values( $entities );
+	}
+
+	/**
+	 * Post IDs WordPress core, WooCommerce, or the protected-IDs filter depend on.
+	 *
+	 * @return array<int, true>
+	 */
+	private function protected_post_ids(): array {
+		$ids = array();
+		if ( \function_exists( 'get_option' ) ) {
+			foreach ( self::PROTECTED_PAGE_OPTIONS as $option ) {
+				$ids[] = (int) \get_option( $option, 0 );
+			}
+		}
+		if ( \function_exists( 'apply_filters' ) ) {
+			$filtered = \apply_filters( self::PROTECTED_IDS_FILTER, array() );
+			foreach ( is_array( $filtered ) ? $filtered : array() as $id ) {
+				$ids[] = (int) $id;
+			}
+		}
+
+		$protected = array();
+		foreach ( $ids as $id ) {
+			if ( $id > 0 ) {
+				$protected[ $id ] = true;
+			}
+		}
+
+		return $protected;
 	}
 
 	private function block_identity( int $post_id ): string {
@@ -2337,7 +2546,7 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		if ( ! in_array( $kind, array( 'page', 'post' ), true ) ) {
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ORPHAN_RETIRE_UNSUPPORTED', 'Only pages and posts can be retired.' );
 		}
-		if ( ! \function_exists( 'wp_update_post' ) ) {
+		if ( ! \function_exists( 'wp_update_post' ) || ! \function_exists( 'get_posts' ) ) {
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_RUNTIME_UNAVAILABLE', 'WordPress post persistence functions are unavailable.' );
 		}
 
@@ -2351,6 +2560,23 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		if ( in_array( $status, array( '', 'draft', 'trash', 'auto-draft' ), true ) ) {
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ORPHAN_RETIRE_UNSUPPORTED', sprintf( 'Content with status "%s" is not retired.', $status ) );
 		}
+		if ( isset( $this->protected_post_ids()[ $post_id ] ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ORPHAN_PROTECTED', sprintf( '"%s" was not retired because WordPress or a plugin uses it as a special page.', $identity ) );
+		}
+		$children = \get_posts(
+			array(
+				'post_type'        => 'any',
+				'post_parent'      => $post_id,
+				'post_status'      => array( 'publish', 'future', 'pending', 'private' ),
+				'posts_per_page'   => 1,
+				'no_found_rows'    => true,
+				'suppress_filters' => true,
+			)
+		);
+		if ( array() !== $children ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ORPHAN_PROTECTED', sprintf( '"%s" was not retired because it still has live child pages, whose URLs depend on it.', $identity ) );
+		}
+
 		if ( ! $this->update_native_meta( $post_id, self::RETIRED_STATUS_META, $status ) ) {
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_META_FAILED', 'WordPress could not record the status to restore later.' );
 		}
@@ -2366,13 +2592,13 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 	}
 
 	/** {@inheritdoc} */
-	public function restore_retired_native_entity( string $identity ): ?RegistrationResult {
+	public function restore_retired_native_entity( SitePersistenceRecord $record ): ?RegistrationResult {
 		// Only pages and posts are ever retired; skip the lookup for every other record.
-		if ( ! in_array( $this->native_kind( $identity ), array( 'page', 'post' ), true ) ) {
+		if ( ! in_array( $this->native_kind( $record->identity() ), array( 'page', 'post' ), true ) ) {
 			return null;
 		}
 
-		$post = $this->owned_native_post( $identity );
+		$post = $this->owned_native_post( $record->identity() );
 		if ( null === $post ) {
 			return null;
 		}
@@ -2383,7 +2609,8 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 			return null;
 		}
 
-		if ( 'draft' === (string) ( get_object_vars( $post )['post_status'] ?? '' ) ) {
+		// A status the code sets itself wins over the remembered one.
+		if ( ! array_key_exists( 'post_status', $record->payload() ) && 'draft' === (string) ( get_object_vars( $post )['post_status'] ?? '' ) ) {
 			$updated = $this->normalize_native_post_id( \wp_update_post( array( 'ID' => $post_id, 'post_status' => $previous ), true ) );
 			if ( $updated instanceof RegistrationResult ) {
 				return $updated;
@@ -2392,6 +2619,24 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		\delete_post_meta( $post_id, self::RETIRED_STATUS_META );
 
 		return RegistrationResult::success();
+	}
+
+	/** {@inheritdoc} */
+	public function record_complete_plan_digest( string $digest ): RegistrationResult {
+		if ( ! \function_exists( 'get_option' ) || ! \function_exists( 'update_option' ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_RUNTIME_UNAVAILABLE', 'WordPress option functions are unavailable.' );
+		}
+
+		return $this->update_option_if_changed( self::COMPLETE_PLAN_OPTION, \get_option( self::COMPLETE_PLAN_OPTION, null ), $digest )
+			? RegistrationResult::success()
+			: RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_UPDATE_FAILED', 'WordPress could not record the applied plan.' );
+	}
+
+	/** {@inheritdoc} */
+	public function complete_plan_digest(): ?string {
+		$digest = \function_exists( 'get_option' ) ? \get_option( self::COMPLETE_PLAN_OPTION, null ) : null;
+
+		return is_string( $digest ) && '' !== $digest ? $digest : null;
 	}
 
 	public function acquire_site_apply_lock(): bool {

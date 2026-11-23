@@ -167,6 +167,7 @@ final class WordPressPersistenceStubs {
 				$name       = $args['name'] ?? null;
 				$meta_key   = $args['meta_key'] ?? null;
 				$meta_value = $args['meta_value'] ?? null;
+				$parent     = $args['post_parent'] ?? null;
 				$matches    = array();
 
 				foreach ( $posts as $post_id => $post ) {
@@ -177,6 +178,9 @@ final class WordPressPersistenceStubs {
 						continue;
 					}
 					if ( null !== $name && ( $post->post_name ?? null ) !== $name ) {
+						continue;
+					}
+					if ( null !== $parent && (int) ( $post->post_parent ?? 0 ) !== (int) $parent ) {
 						continue;
 					}
 					if ( null !== $meta_key && null === $meta_value && ! isset( $GLOBALS['etch_builders_site_persistence_meta'][ $post_id ][ $meta_key ] ) ) {
@@ -196,6 +200,12 @@ final class WordPressPersistenceStubs {
 		if ( ! function_exists( 'get_post_types' ) ) {
 			function get_post_types( array $args = array(), string $output = 'names' ): array {
 				return array( 'post' => 'post', 'page' => 'page', 'wp_template' => 'wp_template', 'wp_block' => 'wp_block', 'book' => 'book' );
+			}
+		}
+
+		if ( ! function_exists( 'post_type_supports' ) ) {
+			function post_type_supports( string $post_type, string $feature ): bool {
+				return 'revisions' !== $feature || ! in_array( $post_type, $GLOBALS['etch_builders_site_persistence_no_revisions'] ?? array(), true );
 			}
 		}
 

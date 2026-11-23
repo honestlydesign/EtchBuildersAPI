@@ -249,7 +249,7 @@ final class SiteCompiler {
 		$identity = self::page_identity( $page );
 		try {
 			$blocks     = $page->get_blocks();
-			$entities[] = CompiledSiteEntity::new( CompiledSiteEntityType::PAGE, $identity, self::content_payload( $page, $blocks, $page->get_slug(), $page->get_id() ), self::content_intent( $page ), $page->adopts_existing() );
+			$entities[] = CompiledSiteEntity::new( CompiledSiteEntityType::PAGE, $identity, self::content_payload( $page, $blocks, $page->get_slug(), $page->get_id() ), self::content_intent( $page ), $page->adopts_existing(), $page->reclaims_from_editors() );
 			self::append_pattern_dependencies( $identity, $page->get_pattern_uses(), $dependencies );
 			self::collect_entity_metadata( $identity, $page, $blocks, $dependencies, $style_owners, $assets, $asset_ids, $ownership, $diagnostics, $loop_keys );
 		} catch ( Throwable $throwable ) {
@@ -285,7 +285,7 @@ final class SiteCompiler {
 		}
 		try {
 			$blocks     = $post->get_blocks();
-			$entities[] = CompiledSiteEntity::new( CompiledSiteEntityType::POST, $identity, self::content_payload( $post, $blocks, $post->get_slug(), $post->get_id(), $post_type ), self::content_intent( $post ), $post->adopts_existing() );
+			$entities[] = CompiledSiteEntity::new( CompiledSiteEntityType::POST, $identity, self::content_payload( $post, $blocks, $post->get_slug(), $post->get_id(), $post_type ), self::content_intent( $post ), $post->adopts_existing(), $post->reclaims_from_editors() );
 			self::append_pattern_dependencies( $identity, $post->get_pattern_uses(), $dependencies );
 			self::collect_entity_metadata( $identity, $post, $blocks, $dependencies, $style_owners, $assets, $asset_ids, $ownership, $diagnostics, $loop_keys );
 		} catch ( Throwable $throwable ) {
@@ -307,7 +307,7 @@ final class SiteCompiler {
 		$identity = 'template:slug:' . (string) $template->get_slug();
 		try {
 			$blocks     = $template->get_blocks();
-			$entities[] = CompiledSiteEntity::new( CompiledSiteEntityType::TEMPLATE, $identity, self::content_payload( $template, $blocks, $template->get_slug(), null ), self::content_intent( $template ), $template->adopts_existing() );
+			$entities[] = CompiledSiteEntity::new( CompiledSiteEntityType::TEMPLATE, $identity, self::content_payload( $template, $blocks, $template->get_slug(), null ), self::content_intent( $template ), $template->adopts_existing(), $template->reclaims_from_editors() );
 			self::append_pattern_dependencies( $identity, $template->get_pattern_uses(), $dependencies );
 			self::collect_entity_metadata( $identity, $template, $blocks, $dependencies, $style_owners, $assets, $asset_ids, $ownership, $diagnostics, $loop_keys );
 		} catch ( Throwable $throwable ) {

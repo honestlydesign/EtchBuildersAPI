@@ -49,34 +49,19 @@ class SitePersistence implements SitePersistenceInterface {
 	 * Apply entities first, then styles, then assets in plan order.
 	 */
 	public function apply( CompiledSitePlan $plan ): SitePersistenceReport {
-		$blocking = array_values(
-			array_filter(
-				$plan->diagnostics(),
-				static fn ( CompiledSiteDiagnostic $diagnostic ): bool => CompiledSiteDiagnosticSeverity::ERROR === $diagnostic->severity()
-			)
-		);
-
-		if ( array() !== $blocking ) {
-			return SitePersistenceReport::new( blocking_diagnostics: $blocking );
+		$validated = $this->validate_plan( $plan );
+		if ( array() !== $validated['diagnostics'] ) {
+			return SitePersistenceReport::new( blocking_diagnostics: $validated['diagnostics'] );
 		}
 
-		$ordered = $this->order_entities( $plan );
-		if ( array() !== $ordered['diagnostics'] ) {
-			return SitePersistenceReport::new( blocking_diagnostics: $ordered['diagnostics'] );
-		}
-
-		$ownership_diagnostics = $this->validate_ownership( $plan );
-		if ( array() !== $ownership_diagnostics ) {
-			return SitePersistenceReport::new( blocking_diagnostics: $ownership_diagnostics );
-		}
-
-		/** @var array<int, array{record: SitePersistenceRecord, intent: CompiledSiteEntityPersistenceIntent, adopt?: bool}> $records */
+		/** @var array<int, array{record: SitePersistenceRecord, intent: CompiledSiteEntityPersistenceIntent, adopt?: bool, reclaim?: bool}> $records */
 		$records = array();
-		foreach ( $ordered['entities'] as $entity ) {
+		foreach ( $validated['entities'] as $entity ) {
 			$records[] = array(
-				'record' => SitePersistenceRecord::from_entity( $entity ),
-				'intent' => $entity->persistence_intent(),
-				'adopt'  => $entity->adopts_existing(),
+				'record'  => SitePersistenceRecord::from_entity( $entity ),
+				'intent'  => $entity->persistence_intent(),
+				'adopt'   => $entity->adopts_existing(),
+				'reclaim' => $entity->reclaims_from_editors(),
 			);
 		}
 		foreach ( $plan->styles() as $style ) {
@@ -109,13 +94,7 @@ class SitePersistence implements SitePersistenceInterface {
 
 		$lock = $mutates && $this->store instanceof SitePersistenceApplyLockInterface ? $this->store : null;
 		if ( null !== $lock && ! $lock->acquire_site_apply_lock() ) {
-			return SitePersistenceReport::new( array(), array(
-				CompiledSiteDiagnostic::new(
-					'ETCH_SITE_PERSISTENCE_APPLY_LOCKED',
-					CompiledSiteDiagnosticSeverity::ERROR,
-					'Another Site apply still holds the site-wide persistence lock.'
-				),
-			) );
+			return SitePersistenceReport::new( array(), array( self::lock_refusal() ) );
 		}
 
 		try {
@@ -125,7 +104,7 @@ class SitePersistence implements SitePersistenceInterface {
 				$record = $entry['record'];
 				$results[] = CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE === $entry['intent']
 					? $this->verify_native_record( $record )
-					: $this->apply_record( $record, $entry['intent'], $entry['adopt'] ?? false );
+					: $this->apply_record( $record, $entry['intent'], $entry['adopt'] ?? false, $entry['reclaim'] ?? false );
 			}
 
 			$duplicates = $this->adopt_editor_style_duplicates( $records, $results );
@@ -133,7 +112,20 @@ class SitePersistence implements SitePersistenceInterface {
 			$orphans    = $plan->is_partial() ? array() : $this->orphan_entities( $plan );
 
 			if ( ! $plan->is_partial() && $this->all_results_succeeded( $results ) && $this->store instanceof SitePersistenceResourceStoreInterface ) {
-				$this->cleanup_orphan_resources( $plan, $results, $orphans );
+				// A plan of verified native dependencies only writes nothing
+				// itself; it takes the lock only when there is something to clean.
+				$this->cleanup_orphan_resources( $plan, $results, $orphans, null === $lock );
+			}
+
+			if ( ! $plan->is_partial() && self::has_content_entities( $plan ) && $this->all_results_succeeded( $results ) && $this->store instanceof SitePersistenceNativeOrphanInterface ) {
+				try {
+					$recorded = $this->store->record_complete_plan_digest( self::plan_digest( $plan ) );
+					if ( ! $recorded->is_success() ) {
+						$results[] = self::registration_failure( 'site:complete-plan', $recorded, 'The applied plan could not be recorded.' );
+					}
+				} catch ( Throwable $throwable ) {
+					$results[] = self::failure( 'site:complete-plan', $throwable );
+				}
 			}
 
 			return SitePersistenceReport::new( $results, array(), array_merge( $duplicates->notices(), $this->orphan_notices( $orphans ) ) );
@@ -190,29 +182,52 @@ class SitePersistence implements SitePersistenceInterface {
 	}
 
 	/**
-	 * Explicitly retire Builder-owned pages and posts this complete plan no longer contains.
+	 * Explicitly retire selected Builder-owned pages and posts removed from code.
 	 *
 	 * Retirement moves the content to draft, the most reversible native
 	 * action: drafts are never purged automatically (trash is, after
 	 * EMPTY_TRASH_DAYS), they keep their ID, slug, revisions, and metadata,
 	 * and they leave the public site. When the content returns to code, the
-	 * next apply restores its previous status. Components, patterns,
-	 * templates, handed-over content, translations, and the pages WordPress
-	 * uses as front page or posts page are reported but never retired.
+	 * next apply restores its previous status.
+	 *
+	 * The operation fails closed. It only touches the identities passed in,
+	 * each of which must still be an orphan of the plan, and it refuses
+	 * unless the plan is the complete plan that the last fully successful
+	 * apply() wrote: an empty plan, a stage plan, a plan not applied yet, or
+	 * a stale plan never retires anything. Components, patterns, templates,
+	 * handed-over content, translations, protected pages (front page, posts
+	 * page, privacy policy, shop pages, filtered IDs), and pages with live
+	 * child pages are never retired.
+	 *
+	 * @param array<int, string> $identities Orphan identities from a prior orphans() report.
 	 */
-	public function retire_orphans( CompiledSitePlan $plan ): SitePersistenceReport {
-		$blocking = array_values(
-			array_filter(
-				$plan->diagnostics(),
-				static fn ( CompiledSiteDiagnostic $diagnostic ): bool => CompiledSiteDiagnosticSeverity::ERROR === $diagnostic->severity()
-			)
-		);
-		if ( array() !== $blocking ) {
-			return SitePersistenceReport::new( array(), $blocking );
+	public function retire_orphans( CompiledSitePlan $plan, array $identities ): SitePersistenceReport {
+		$validated = $this->validate_plan( $plan );
+		if ( array() !== $validated['diagnostics'] ) {
+			return SitePersistenceReport::new( array(), $validated['diagnostics'] );
 		}
 		if ( $plan->is_partial() ) {
 			return SitePersistenceReport::new( array(), array( self::partial_plan_refusal() ) );
 		}
+
+		if ( ! self::has_content_entities( $plan ) ) {
+			return SitePersistenceReport::new( array(), array(
+				CompiledSiteDiagnostic::new( 'ETCH_SITE_PERSISTENCE_ORPHANS_NO_CONTENT', CompiledSiteDiagnosticSeverity::ERROR, 'The plan contains no pages, posts, or templates, so it cannot be the complete Site plan; nothing was retired.' ),
+			) );
+		}
+
+		$selected = array();
+		foreach ( $identities as $identity ) {
+			if ( is_string( $identity ) && '' !== trim( $identity ) ) {
+				$selected[ trim( $identity ) ] = true;
+			}
+		}
+		if ( array() === $selected ) {
+			return SitePersistenceReport::new( array(), array(
+				CompiledSiteDiagnostic::new( 'ETCH_SITE_PERSISTENCE_ORPHANS_NONE_SELECTED', CompiledSiteDiagnosticSeverity::ERROR, 'Pass the identities to retire, taken from an orphans() report; nothing was retired.' ),
+			) );
+		}
+
 		if ( ! $this->store instanceof SitePersistenceNativeOrphanInterface ) {
 			return SitePersistenceReport::new( array(), array(
 				CompiledSiteDiagnostic::new( 'ETCH_SITE_PERSISTENCE_ORPHANS_UNSUPPORTED', CompiledSiteDiagnosticSeverity::ERROR, 'The configured Site persistence store cannot list or retire Builder-owned content.' ),
@@ -221,33 +236,58 @@ class SitePersistence implements SitePersistenceInterface {
 
 		$lock = $this->store instanceof SitePersistenceApplyLockInterface ? $this->store : null;
 		if ( null !== $lock && ! $lock->acquire_site_apply_lock() ) {
-			return SitePersistenceReport::new( array(), array(
-				CompiledSiteDiagnostic::new( 'ETCH_SITE_PERSISTENCE_APPLY_LOCKED', CompiledSiteDiagnosticSeverity::ERROR, 'Another Site apply still holds the site-wide persistence lock.' ),
-			) );
+			return SitePersistenceReport::new( array(), array( self::lock_refusal() ) );
 		}
 
 		try {
-			$results = array();
-			$kept    = array();
+			try {
+				$applied = $this->store->complete_plan_digest();
+			} catch ( Throwable ) {
+				$applied = null;
+			}
+			if ( null === $applied || ! hash_equals( $applied, self::plan_digest( $plan ) ) ) {
+				return SitePersistenceReport::new( array(), array(
+					CompiledSiteDiagnostic::new( 'ETCH_SITE_PERSISTENCE_ORPHANS_PLAN_NOT_APPLIED', CompiledSiteDiagnosticSeverity::ERROR, 'This plan is not the complete plan the last successful apply wrote. Apply it successfully first; nothing was retired.' ),
+				) );
+			}
+
+			$orphans = array();
 			foreach ( $this->orphan_entities( $plan ) as $orphan ) {
-				if ( $orphan instanceof CompiledSiteDiagnostic || null !== self::retirement_obstacle( $orphan ) ) {
-					$kept[] = $orphan;
+				if ( $orphan instanceof CompiledSiteDiagnostic ) {
+					return SitePersistenceReport::new( array(), array( $orphan ) );
+				}
+				$orphans[ $orphan['identity'] ] = $orphan;
+			}
+
+			$results = array();
+			foreach ( array_keys( $selected ) as $identity ) {
+				$orphan = $orphans[ $identity ] ?? null;
+				if ( null === $orphan ) {
+					$results[] = SitePersistenceResult::new( $identity, SitePersistenceOutcome::CONFLICT, 'ETCH_SITE_PERSISTENCE_ORPHAN_NOT_FOUND', sprintf( '"%s" is not Builder-owned content missing from this plan; it was not retired.', $identity ) );
+					continue;
+				}
+
+				$obstacle = self::retirement_obstacle( $orphan );
+				if ( null !== $obstacle ) {
+					$results[] = SitePersistenceResult::new( $identity, SitePersistenceOutcome::SKIPPED, self::ORPHAN_KEPT, sprintf( '"%s" was not retired because %s.', $identity, $obstacle ) );
 					continue;
 				}
 
 				try {
-					$retired = $this->store->retire_owned_native_entity( $orphan['identity'] );
+					$retired = $this->store->retire_owned_native_entity( $identity );
 				} catch ( Throwable $throwable ) {
-					$results[] = self::failure( $orphan['identity'], $throwable );
+					$results[] = self::failure( $identity, $throwable );
 					continue;
 				}
 
-				$results[] = $retired->is_success()
-					? SitePersistenceResult::new( $orphan['identity'], SitePersistenceOutcome::UPDATED, self::ORPHAN_RETIRED, 'Builder-owned content removed from code was moved to draft; adding it back to code restores its status.' )
-					: SitePersistenceResult::new( $orphan['identity'], SitePersistenceOutcome::FAILED, $retired->get_error_code() ?: 'ETCH_SITE_PERSISTENCE_ORPHAN_RETIRE_FAILED', $retired->get_error_message() ?: 'The orphaned content could not be moved to draft.' );
+				$results[] = match ( true ) {
+					$retired->is_success()                                              => SitePersistenceResult::new( $identity, SitePersistenceOutcome::UPDATED, self::ORPHAN_RETIRED, 'Builder-owned content removed from code was moved to draft; adding it back to code restores its status.' ),
+					'ETCH_SITE_PERSISTENCE_ORPHAN_PROTECTED' === $retired->get_error_code() => SitePersistenceResult::new( $identity, SitePersistenceOutcome::SKIPPED, self::ORPHAN_KEPT, $retired->get_error_message() ),
+					default                                                             => self::registration_failure( $identity, $retired, 'The orphaned content could not be moved to draft.' ),
+				};
 			}
 
-			return SitePersistenceReport::new( $results, array(), $this->orphan_notices( $kept ) );
+			return SitePersistenceReport::new( $results );
 		} finally {
 			$lock?->release_site_apply_lock();
 		}
@@ -258,9 +298,38 @@ class SitePersistence implements SitePersistenceInterface {
 	 *
 	 * This operation is intentionally separate from apply(): legacy prefixes and
 	 * collections can authorize migration only when the caller supplies the
-	 * exact current plan and the native record matches it.
+	 * exact current plan and the native record matches it. It runs under the
+	 * site apply lock, like apply().
 	 */
 	public function migrate_legacy_ownership( CompiledSitePlan $plan ): RegistrationResult {
+		$validated = $this->validate_plan( $plan );
+		if ( array() !== $validated['diagnostics'] ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_BLOCKED', $validated['diagnostics'][0]->message() );
+		}
+
+		if ( ! $this->store instanceof SitePersistenceResourceStoreInterface ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_LEGACY_MIGRATION_UNSUPPORTED', 'The configured Site persistence store does not support explicit legacy ownership migration.' );
+		}
+
+		$lock = $this->store instanceof SitePersistenceApplyLockInterface ? $this->store : null;
+		if ( null !== $lock && ! $lock->acquire_site_apply_lock() ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_APPLY_LOCKED', self::lock_refusal()->message() );
+		}
+
+		try {
+			return $this->store->migrate_legacy_ownership( $plan );
+		} finally {
+			$lock?->release_site_apply_lock();
+		}
+	}
+
+	/**
+	 * Run the blocking checks every writing operation shares: compiler
+	 * errors, dependency ordering, and ownership edges.
+	 *
+	 * @return array{entities: array<int, CompiledSiteEntity>, diagnostics: array<int, CompiledSiteDiagnostic>}
+	 */
+	private function validate_plan( CompiledSitePlan $plan ): array {
 		$blocking = array_values(
 			array_filter(
 				$plan->diagnostics(),
@@ -268,24 +337,38 @@ class SitePersistence implements SitePersistenceInterface {
 			)
 		);
 		if ( array() !== $blocking ) {
-			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_BLOCKED', $blocking[0]->message() );
+			return array( 'entities' => array(), 'diagnostics' => $blocking );
 		}
 
 		$ordered = $this->order_entities( $plan );
 		if ( array() !== $ordered['diagnostics'] ) {
-			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_BLOCKED', $ordered['diagnostics'][0]->message() );
+			return $ordered;
 		}
 
 		$ownership_diagnostics = $this->validate_ownership( $plan );
 		if ( array() !== $ownership_diagnostics ) {
-			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_BLOCKED', $ownership_diagnostics[0]->message() );
+			return array( 'entities' => array(), 'diagnostics' => $ownership_diagnostics );
 		}
 
-		if ( ! $this->store instanceof SitePersistenceResourceStoreInterface ) {
-			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_LEGACY_MIGRATION_UNSUPPORTED', 'The configured Site persistence store does not support explicit legacy ownership migration.' );
+		return $ordered;
+	}
+
+	private static function has_content_entities( CompiledSitePlan $plan ): bool {
+		foreach ( $plan->entities() as $entity ) {
+			if ( in_array( $entity->type(), array( CompiledSiteEntityType::PAGE, CompiledSiteEntityType::POST, CompiledSiteEntityType::TEMPLATE ), true ) ) {
+				return true;
+			}
 		}
 
-		return $this->store->migrate_legacy_ownership( $plan );
+		return false;
+	}
+
+	private static function plan_digest( CompiledSitePlan $plan ): string {
+		return hash( 'sha256', (string) json_encode( $plan->to_array(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION | JSON_INVALID_UTF8_SUBSTITUTE ) );
+	}
+
+	private static function lock_refusal(): CompiledSiteDiagnostic {
+		return CompiledSiteDiagnostic::new( 'ETCH_SITE_PERSISTENCE_APPLY_LOCKED', CompiledSiteDiagnosticSeverity::ERROR, 'Another Site apply still holds the site-wide persistence lock.' );
 	}
 
 	/**
@@ -489,7 +572,12 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 	}
 
-	private function apply_record( SitePersistenceRecord $record, CompiledSiteEntityPersistenceIntent $intent = CompiledSiteEntityPersistenceIntent::MANAGED, bool $adopt = false ): SitePersistenceResult {
+	private function apply_record(
+		SitePersistenceRecord $record,
+		CompiledSiteEntityPersistenceIntent $intent = CompiledSiteEntityPersistenceIntent::MANAGED,
+		bool $adopt = false,
+		bool $reclaim = false
+	): SitePersistenceResult {
 		if ( CompiledSiteEntityType::COMPONENT_CONTRACT_CATALOG->value === $record->kind() ) {
 			return SitePersistenceResult::new(
 				$record->identity(),
@@ -500,6 +588,7 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		$hand_over = CompiledSiteEntityPersistenceIntent::CREATE_ONLY === $intent;
+		$hand_overs = $this->store instanceof SitePersistenceHandOverInterface ? $this->store : null;
 
 		try {
 			$current = $this->store->find( $record->identity() );
@@ -508,12 +597,43 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		if ( null === $current ) {
+			try {
+				$was_handed_over = null !== $hand_overs && $hand_overs->was_handed_over( $record->identity() );
+				if ( $was_handed_over && $reclaim ) {
+					$forgotten = $hand_overs->forget_hand_over( $record->identity() );
+					if ( ! $forgotten->is_success() ) {
+						return self::registration_failure( $record->identity(), $forgotten, 'The hand-over could not be forgotten.' );
+					}
+					$was_handed_over = false;
+				}
+			} catch ( Throwable $throwable ) {
+				return self::failure( $record->identity(), $throwable );
+			}
+			if ( $was_handed_over ) {
+				// Editors renamed, trashed, or deleted content they own; never recreate it behind their back.
+				return SitePersistenceResult::new(
+					$record->identity(),
+					SitePersistenceOutcome::UNCHANGED,
+					'ETCH_SITE_PERSISTENCE_HANDED_OVER_MISSING',
+					'Content handed over to editors no longer exists under this identity (an editor renamed, trashed, or deleted it), so it is not created again. Add reclaim_from_editors() to create it from code again.'
+				);
+			}
+
 			$created = $this->write( $record, false );
 
 			return $hand_over && $created->is_success() ? $this->mark_handed_over( $record, $created ) : $created;
 		}
 
 		if ( ! $current->is_owned() ) {
+			try {
+				$handed_over = null !== $hand_overs && $hand_overs->is_handed_over( $record->identity() );
+			} catch ( Throwable $throwable ) {
+				return self::failure( $record->identity(), $throwable );
+			}
+			if ( $handed_over ) {
+				return $this->apply_handed_over_record( $record, $hand_over, $reclaim );
+			}
+
 			if ( $adopt ) {
 				return $this->adopt_native_record( $record, $hand_over );
 			}
@@ -531,46 +651,119 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		if ( $hand_over ) {
+			$restored = $this->restore_retired( $record );
+			if ( $restored instanceof SitePersistenceResult ) {
+				return $restored;
+			}
+
 			return $this->mark_handed_over(
 				$record,
 				SitePersistenceResult::new(
 					$record->identity(),
-					SitePersistenceOutcome::UNCHANGED,
-					'ETCH_SITE_PERSISTENCE_HANDED_OVER',
-					'Content was handed over to editors after it was created; it is not written again.'
+					$restored ? SitePersistenceOutcome::UPDATED : SitePersistenceOutcome::UNCHANGED,
+					$restored ? 'ETCH_SITE_PERSISTENCE_RESTORED' : 'ETCH_SITE_PERSISTENCE_HANDED_OVER',
+					$restored
+						? 'Content that was retired after leaving the code is back in code; its previous status was restored and it was handed over to editors.'
+						: 'Content was handed over to editors after it was created; it is not written again.'
 				)
 			);
 		}
 
-		try {
-			$restored = $this->store instanceof SitePersistenceNativeOrphanInterface
-				? $this->store->restore_retired_native_entity( $record->identity() )
-				: null;
-			if ( $this->store instanceof SitePersistenceHandOverInterface && $this->store->is_handed_over( $record->identity() ) ) {
-				$released = $this->store->mark_handed_over( $record->identity(), false );
-				if ( ! $released->is_success() ) {
-					return self::registration_failure( $record->identity(), $released, 'The hand-over marker could not be cleared.' );
-				}
+		if ( $current->fingerprint() === $record->fingerprint() && $current->kind() === $record->kind() ) {
+			$written = SitePersistenceResult::new(
+				$record->identity(),
+				SitePersistenceOutcome::UNCHANGED,
+				'ETCH_SITE_PERSISTENCE_UNCHANGED',
+				'Compiled Site record is already current.'
+			);
+		} else {
+			$written = $this->write( $record, true );
+			if ( ! $written->is_success() ) {
+				return $written;
 			}
+		}
+
+		// Restore a retired status only once the content write succeeded.
+		$restored = $this->restore_retired( $record );
+		if ( $restored instanceof SitePersistenceResult ) {
+			return $restored;
+		}
+
+		return $restored
+			? SitePersistenceResult::new( $record->identity(), SitePersistenceOutcome::UPDATED, 'ETCH_SITE_PERSISTENCE_RESTORED', 'Content that was retired after leaving the code is back in code; its previous status was restored.' )
+			: $written;
+	}
+
+	/**
+	 * Apply a record whose native content an earlier apply handed over to editors.
+	 *
+	 * Handed-over content stays with editors while the code keeps handing it
+	 * over. When the code manages it again, editor changes are only
+	 * overwritten after an explicit reclaim; otherwise the apply reports a
+	 * conflict and writes nothing.
+	 */
+	private function apply_handed_over_record( SitePersistenceRecord $record, bool $hand_over, bool $reclaim ): SitePersistenceResult {
+		if ( $hand_over ) {
+			return SitePersistenceResult::new(
+				$record->identity(),
+				SitePersistenceOutcome::UNCHANGED,
+				'ETCH_SITE_PERSISTENCE_HANDED_OVER',
+				'Content was handed over to editors after it was created; it is not written again.'
+			);
+		}
+
+		if ( ! $reclaim || ! $this->store instanceof SitePersistenceHandOverInterface ) {
+			return SitePersistenceResult::new(
+				$record->identity(),
+				SitePersistenceOutcome::CONFLICT,
+				'ETCH_SITE_PERSISTENCE_HANDED_OVER_RECLAIM_REQUIRED',
+				'This content was handed over to editors, and the code no longer hands it over. Nothing was written. Add reclaim_from_editors() to replace the editors\' version with the code version (WordPress keeps a revision), or hand_over_after_create() to leave it with editors.'
+			);
+		}
+
+		try {
+			$released = $this->store->mark_handed_over( $record->identity(), false );
 		} catch ( Throwable $throwable ) {
 			return self::failure( $record->identity(), $throwable );
 		}
-		if ( null !== $restored && ! $restored->is_success() ) {
-			return self::registration_failure( $record->identity(), $restored, 'Retired content could not be restored.' );
+		if ( ! $released->is_success() ) {
+			return self::registration_failure( $record->identity(), $released, 'The hand-over could not be ended.' );
 		}
 
-		if ( $current->fingerprint() === $record->fingerprint() && $current->kind() === $record->kind() ) {
-			return null !== $restored
-				? SitePersistenceResult::new( $record->identity(), SitePersistenceOutcome::UPDATED, 'ETCH_SITE_PERSISTENCE_RESTORED', 'Content that was retired after leaving the code is back in code; its previous status was restored.' )
-				: SitePersistenceResult::new(
-					$record->identity(),
-					SitePersistenceOutcome::UNCHANGED,
-					'ETCH_SITE_PERSISTENCE_UNCHANGED',
-					'Compiled Site record is already current.'
-				);
+		$written = $this->write( $record, true );
+		if ( ! $written->is_success() ) {
+			try {
+				$this->store->mark_handed_over( $record->identity(), true );
+			} catch ( Throwable ) {
+				// The failed write is reported either way.
+			}
+
+			return $written;
 		}
 
-		return $this->write( $record, true );
+		return SitePersistenceResult::new( $record->identity(), SitePersistenceOutcome::UPDATED, 'ETCH_SITE_PERSISTENCE_RECLAIMED', 'Content handed over to editors was reclaimed by code and replaced with the compiled version.' );
+	}
+
+	/**
+	 * Restore a retired record's status; a result on failure, else whether it was restored.
+	 */
+	private function restore_retired( SitePersistenceRecord $record ): bool|SitePersistenceResult {
+		if ( ! $this->store instanceof SitePersistenceNativeOrphanInterface ) {
+			return false;
+		}
+
+		try {
+			$restored = $this->store->restore_retired_native_entity( $record );
+		} catch ( Throwable $throwable ) {
+			return self::failure( $record->identity(), $throwable );
+		}
+		if ( null === $restored ) {
+			return false;
+		}
+
+		return $restored->is_success()
+			? true
+			: self::registration_failure( $record->identity(), $restored, 'Retired content could not be restored.' );
 	}
 
 	/**
@@ -578,8 +771,9 @@ class SitePersistence implements SitePersistenceInterface {
 	 *
 	 * Managed content is then written from code. Handed-over content keeps
 	 * its WordPress content and only gains the ownership and hand-over
-	 * markers. A failed follow-up write releases the claim again, so a
-	 * half-adopted record is never treated as Builder-owned later.
+	 * markers. A failed follow-up write releases the claim and restores the
+	 * content the claim found, so a half-adopted record is never treated as
+	 * Builder-owned later and the person's content is not lost.
 	 */
 	private function adopt_native_record( SitePersistenceRecord $record, bool $hand_over ): SitePersistenceResult {
 		if ( ! $this->store instanceof SitePersistenceNativeClaimInterface ) {
@@ -592,7 +786,7 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		try {
-			$claim = $this->store->claim_unowned_native_record( $record );
+			$claim = $this->store->claim_unowned_native_record( $record, ! $hand_over );
 		} catch ( Throwable $throwable ) {
 			return self::failure( $record->identity(), $throwable );
 		}
@@ -611,9 +805,12 @@ class SitePersistence implements SitePersistenceInterface {
 
 		if ( ! $written->is_success() ) {
 			try {
-				$this->store->release_native_claim( $record );
-			} catch ( Throwable ) {
-				// The failed write is reported below either way.
+				$released = $this->store->release_native_claim( $record );
+			} catch ( Throwable $throwable ) {
+				return self::failure( $record->identity(), $throwable );
+			}
+			if ( ! $released->is_success() ) {
+				return self::registration_failure( $record->identity(), $released, 'A failed adoption could not be undone.' );
 			}
 
 			return $written;
@@ -621,7 +818,7 @@ class SitePersistence implements SitePersistenceInterface {
 
 		return $hand_over
 			? $written
-			: SitePersistenceResult::new( $record->identity(), SitePersistenceOutcome::UPDATED, 'ETCH_SITE_PERSISTENCE_ADOPTED', 'Existing content was adopted and replaced with the compiled version; WordPress keeps the previous content as a revision.' );
+			: SitePersistenceResult::new( $record->identity(), SitePersistenceOutcome::UPDATED, 'ETCH_SITE_PERSISTENCE_ADOPTED', 'Existing content was adopted and replaced with the compiled version; the earlier version stays in the WordPress revision history.' );
 	}
 
 	/**
@@ -633,9 +830,6 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		try {
-			if ( $this->store->is_handed_over( $record->identity() ) ) {
-				return $result;
-			}
 			$marked = $this->store->mark_handed_over( $record->identity(), true );
 		} catch ( Throwable $throwable ) {
 			return self::failure( $record->identity(), $throwable );
@@ -658,7 +852,10 @@ class SitePersistence implements SitePersistenceInterface {
 	/**
 	 * List owned native content the complete plan no longer contains.
 	 *
-	 * @return array<int, array{identity: string, kind: string, status: string, handed_over: bool, retired: bool, front_page: bool}|CompiledSiteDiagnostic>
+	 * Content an ID-targeted plan entity points at is not an orphan, even
+	 * while its recorded identity still uses an older slug identity.
+	 *
+	 * @return array<int, array{identity: string, kind: string, post_id: int, status: string, handed_over: bool, retired: bool, protected: bool}|CompiledSiteDiagnostic>
 	 */
 	private function orphan_entities( CompiledSitePlan $plan ): array {
 		if ( ! $this->store instanceof SitePersistenceNativeOrphanInterface ) {
@@ -671,19 +868,28 @@ class SitePersistence implements SitePersistenceInterface {
 			return array( CompiledSiteDiagnostic::new( 'ETCH_SITE_PERSISTENCE_ORPHANS_UNAVAILABLE', CompiledSiteDiagnosticSeverity::WARNING, $throwable->getMessage() ?: 'Builder-owned content could not be listed.' ) );
 		}
 
-		$active = array();
+		$active     = array();
+		$active_ids = array();
 		foreach ( $plan->entities() as $entity ) {
 			$active[ $entity->identity() ] = true;
+			if ( 1 === preg_match( '/^(?:page|post):id:(\d+)$/D', $entity->identity(), $match ) ) {
+				$active_ids[ (int) $match[1] ] = true;
+			}
 		}
 
-		$orphans = array_values( array_filter( $owned, static fn ( array $entity ): bool => ! isset( $active[ $entity['identity'] ] ) ) );
+		$orphans = array_values(
+			array_filter(
+				$owned,
+				static fn ( array $entity ): bool => ! isset( $active[ $entity['identity'] ] ) && ! isset( $active_ids[ $entity['post_id'] ] )
+			)
+		);
 		usort( $orphans, static fn ( array $left, array $right ): int => $left['identity'] <=> $right['identity'] );
 
 		return $orphans;
 	}
 
 	/**
-	 * @param array<int, array{identity: string, kind: string, status: string, handed_over: bool, retired: bool, front_page: bool}|CompiledSiteDiagnostic> $orphans
+	 * @param array<int, array{identity: string, kind: string, post_id: int, status: string, handed_over: bool, retired: bool, protected: bool}|CompiledSiteDiagnostic> $orphans
 	 * @return array<int, CompiledSiteDiagnostic>
 	 */
 	private function orphan_notices( array $orphans ): array {
@@ -713,7 +919,7 @@ class SitePersistence implements SitePersistenceInterface {
 					$identity,
 					'' !== $orphan['status'] ? $orphan['status'] : 'as it is',
 					null === $obstacle
-						? 'Run SitePersistence::retire_orphans() to move it to draft, add it back to code, or delete it in WordPress.'
+						? 'Pass this identity to SitePersistence::retire_orphans() with the applied complete plan to move it to draft, add it back to code, or delete it in WordPress.'
 						: sprintf( 'It is not retired automatically because %s; add it back to code or delete it in WordPress.', $obstacle )
 				),
 				$identity
@@ -724,9 +930,9 @@ class SitePersistence implements SitePersistenceInterface {
 	}
 
 	/**
-	 * Why an orphan cannot be moved to draft, or null when it can.
+	 * Why an orphan cannot be moved to draft, or null when it may be.
 	 *
-	 * @param array{identity: string, kind: string, status: string, handed_over: bool, retired: bool, front_page: bool} $orphan
+	 * @param array{identity: string, kind: string, post_id: int, status: string, handed_over: bool, retired: bool, protected: bool} $orphan
 	 */
 	private static function retirement_obstacle( array $orphan ): ?string {
 		return match ( true ) {
@@ -734,7 +940,7 @@ class SitePersistence implements SitePersistenceInterface {
 			$orphan['retired']                                        => 'it is already retired',
 			'template' === $orphan['kind']                            => 'WordPress keeps rendering draft templates',
 			! in_array( $orphan['kind'], self::RETIRABLE_KINDS, true ) => 'other content may still use it',
-			$orphan['front_page']                                     => 'WordPress uses it as the front page or posts page',
+			$orphan['protected']                                      => 'WordPress or a plugin uses it as a special page (front page, posts page, privacy policy, shop page, or a filtered ID)',
 			'draft' === $orphan['status']                             => 'it is already a draft',
 			default                                                   => null,
 		};
@@ -865,9 +1071,9 @@ class SitePersistence implements SitePersistenceInterface {
 	 * rendering; they are cleaned once the content is trashed or deleted.
 	 *
 	 * @param array<int, SitePersistenceResult>                                                                                        $results
-	 * @param array<int, array{identity: string, kind: string, status: string, handed_over: bool, retired: bool, front_page: bool}|CompiledSiteDiagnostic> $orphans
+	 * @param array<int, array{identity: string, kind: string, post_id: int, status: string, handed_over: bool, retired: bool, protected: bool}|CompiledSiteDiagnostic> $orphans
 	 */
-	private function cleanup_orphan_resources( CompiledSitePlan $plan, array &$results, array $orphans = array() ): void {
+	private function cleanup_orphan_resources( CompiledSitePlan $plan, array &$results, array $orphans = array(), bool $needs_lock = false ): void {
 		if ( ! $this->store instanceof SitePersistenceResourceStoreInterface ) {
 			return;
 		}
@@ -890,6 +1096,7 @@ class SitePersistence implements SitePersistenceInterface {
 		$records = $this->store->owned_resource_records();
 		usort( $records, static fn ( SitePersistenceRecord $left, SitePersistenceRecord $right ): int => $left->identity() <=> $right->identity() );
 
+		$deletable = array();
 		foreach ( $records as $record ) {
 			if ( isset( $active[ $record->identity() ] ) ) {
 				continue;
@@ -899,7 +1106,36 @@ class SitePersistence implements SitePersistenceInterface {
 					continue 2;
 				}
 			}
+			$deletable[] = $record;
+		}
+		if ( array() === $deletable ) {
+			return;
+		}
 
+		$lock = $needs_lock && $this->store instanceof SitePersistenceApplyLockInterface ? $this->store : null;
+		if ( null !== $lock && ! $lock->acquire_site_apply_lock() ) {
+			$results[] = SitePersistenceResult::new( 'site:cleanup', SitePersistenceOutcome::FAILED, 'ETCH_SITE_PERSISTENCE_APPLY_LOCKED', 'Another Site apply still holds the site-wide persistence lock, so resources removed from code were not cleaned up.' );
+
+			return;
+		}
+
+		try {
+			$this->delete_orphan_resources( $deletable, $results );
+		} finally {
+			$lock?->release_site_apply_lock();
+		}
+	}
+
+	/**
+	 * @param array<int, SitePersistenceRecord>  $records
+	 * @param array<int, SitePersistenceResult> $results
+	 */
+	private function delete_orphan_resources( array $records, array &$results ): void {
+		if ( ! $this->store instanceof SitePersistenceResourceStoreInterface ) {
+			return;
+		}
+
+		foreach ( $records as $record ) {
 			try {
 				$deletion = $this->store->delete_owned_resource( $record );
 			} catch ( Throwable $throwable ) {

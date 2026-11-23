@@ -75,7 +75,10 @@ final class EditorStyleDuplicates {
 	/**
 	 * Return adopted editor duplicates keyed by their native style ID.
 	 *
-	 * @return array<string, array{canonical: string, hash: string}>
+	 * `original` is the duplicate as it was before its first adoption, so
+	 * removing the code-owned style can give a person's style back as it was.
+	 *
+	 * @return array<string, array{canonical: string, hash: string, original?: array<array-key, mixed>}>
 	 */
 	public static function aliases( mixed $aliases ): array {
 		if ( ! is_array( $aliases ) ) {
@@ -95,6 +98,9 @@ final class EditorStyleDuplicates {
 					'canonical' => $canonical,
 					'hash'      => $hash,
 				);
+				if ( is_array( $alias['original'] ?? null ) ) {
+					$normalized[ $alias_id ]['original'] = $alias['original'];
+				}
 			}
 		}
 

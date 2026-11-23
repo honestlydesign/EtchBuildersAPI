@@ -23,7 +23,8 @@ final class CompiledSiteEntity {
 		private readonly string $identity,
 		private readonly array $payload,
 		private readonly CompiledSiteEntityPersistenceIntent $persistence_intent,
-		private readonly bool $adopt_existing
+		private readonly bool $adopt_existing,
+		private readonly bool $reclaim_from_editors
 	) {
 	}
 
@@ -35,13 +36,16 @@ final class CompiledSiteEntity {
 	 * @param array<string, mixed>   $payload  Serialized entity payload.
 	 * @param bool                   $adopt_existing Whether an apply may take over one existing native
 	 *                                               record with this identity that the Builder does not own yet.
+	 * @param bool                   $reclaim_from_editors Whether an apply may take back content an earlier
+	 *                                                     apply handed over to editors.
 	 */
 	public static function new(
 		CompiledSiteEntityType $type,
 		string $identity,
 		array $payload,
 		CompiledSiteEntityPersistenceIntent $persistence_intent = CompiledSiteEntityPersistenceIntent::MANAGED,
-		bool $adopt_existing = false
+		bool $adopt_existing = false,
+		bool $reclaim_from_editors = false
 	): self {
 		$identity = self::validate_identity( $identity, $type );
 		AcyclicArrayGuard::assert_acyclic( $payload );
@@ -62,7 +66,14 @@ final class CompiledSiteEntity {
 			throw new InvalidArgumentException( 'Only pages, posts, and templates can adopt an existing native record.' );
 		}
 
-		return new self( $type, $identity, $payload, $persistence_intent, $adopt_existing );
+		if ( $reclaim_from_editors
+			&& ( CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE === $persistence_intent
+				|| ! in_array( $type, array( CompiledSiteEntityType::PAGE, CompiledSiteEntityType::POST, CompiledSiteEntityType::TEMPLATE ), true ) )
+		) {
+			throw new InvalidArgumentException( 'Only pages, posts, and templates can be reclaimed from editors.' );
+		}
+
+		return new self( $type, $identity, $payload, $persistence_intent, $adopt_existing, $reclaim_from_editors );
 	}
 
 	public function type(): CompiledSiteEntityType {
@@ -92,7 +103,14 @@ final class CompiledSiteEntity {
 	}
 
 	/**
-	 * @return array{type: string, identity: string, payload: array<string, mixed>, persistence_intent?: string, adopt_existing?: true}
+	 * Whether an apply may take back content an earlier apply handed over to editors.
+	 */
+	public function reclaims_from_editors(): bool {
+		return $this->reclaim_from_editors;
+	}
+
+	/**
+	 * @return array{type: string, identity: string, payload: array<string, mixed>, persistence_intent?: string, adopt_existing?: true, reclaim_from_editors?: true}
 	 */
 	public function to_array(): array {
 		$record = array(
@@ -105,6 +123,9 @@ final class CompiledSiteEntity {
 		}
 		if ( $this->adopt_existing ) {
 			$record['adopt_existing'] = true;
+		}
+		if ( $this->reclaim_from_editors ) {
+			$record['reclaim_from_editors'] = true;
 		}
 
 		return $record;
