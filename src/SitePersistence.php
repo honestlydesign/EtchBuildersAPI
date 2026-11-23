@@ -323,8 +323,10 @@ class SitePersistence implements SitePersistenceInterface {
 	 *
 	 * This operation is intentionally separate from apply(): legacy prefixes and
 	 * collections can authorize migration only when the caller supplies the
-	 * exact current plan and the native record matches it. It runs under the
-	 * site apply lock, like apply().
+	 * exact current plan and the native record matches it. A native style
+	 * still in a legacy `OhMyIDEtch` collection matches a compiled style in
+	 * `default`; the next apply moves it there under the same ID. It runs
+	 * under the site apply lock, like apply().
 	 */
 	public function migrate_legacy_ownership( CompiledSitePlan $plan ): RegistrationResult {
 		$validated = $this->validate_plan( $plan );

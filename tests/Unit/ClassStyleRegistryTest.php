@@ -348,7 +348,7 @@ final class ClassStyleRegistryTest extends TestCase {
 		}
 	}
 
-	public function test_auto_created_class_style_marked_with_omide_collection(): void {
+	public function test_auto_created_class_style_lives_where_the_etch_editor_looks_classes_up(): void {
 		$style_snapshot = Style::snapshot();
 
 		try {
@@ -360,7 +360,7 @@ final class ClassStyleRegistryTest extends TestCase {
 
 			$registered = Style::registered_styles();
 			self::assertArrayHasKey( 'stack', $registered );
-			self::assertSame( 'OhMyIDEtch', $registered['stack']['collection'] );
+			self::assertSame( 'default', $registered['stack']['collection'] );
 		} finally {
 			ClassStyleRegistry::reset_cache();
 			Style::restore( $style_snapshot );
