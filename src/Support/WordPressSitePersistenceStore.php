@@ -15,7 +15,10 @@ use HonestlyDesign\EtchBuilders\CompiledSiteOwnership;
 use HonestlyDesign\EtchBuilders\CompiledSitePlan;
 use HonestlyDesign\EtchBuilders\CompiledSiteResource;
 use HonestlyDesign\EtchBuilders\CompiledSiteResourceType;
+use HonestlyDesign\EtchBuilders\CompiledSiteDiagnostic;
+use HonestlyDesign\EtchBuilders\CompiledSiteDiagnosticSeverity;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceApplyLockInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceEditorStyleDuplicateInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceNativeRetirementInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceRecordAdoptionInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceResourceStoreInterface;
@@ -23,7 +26,10 @@ use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceStylesheetAdoptionInter
 use HonestlyDesign\EtchBuilders\RegistrationResult;
 use HonestlyDesign\EtchBuilders\SiteHomePolicy;
 use HonestlyDesign\EtchBuilders\SiteHomePolicyMode;
+use HonestlyDesign\EtchBuilders\SitePersistenceOutcome;
 use HonestlyDesign\EtchBuilders\SitePersistenceRecord;
+use HonestlyDesign\EtchBuilders\SitePersistenceReport;
+use HonestlyDesign\EtchBuilders\SitePersistenceResult;
 use Throwable;
 
 /**
@@ -33,7 +39,7 @@ use Throwable;
  * adapter keeps builder ownership and snapshots beside native WordPress data
  * so native records remain inspectable by Etch and other WordPress tooling.
  */
-final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInterface, SitePersistenceNativeRetirementInterface, SitePersistenceRecordAdoptionInterface, SitePersistenceResourceStoreInterface, SitePersistenceStylesheetAdoptionInterface {
+final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInterface, SitePersistenceEditorStyleDuplicateInterface, SitePersistenceNativeRetirementInterface, SitePersistenceRecordAdoptionInterface, SitePersistenceResourceStoreInterface, SitePersistenceStylesheetAdoptionInterface {
 
 	private const OPTION_PREFIX = 'etch_builders_site_record_';
 
@@ -1136,8 +1142,22 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 	 * @param array<string, mixed> $payload Compiled style payload.
 	 */
 	private function native_style_is_builder_handoff( mixed $existing, array $payload ): bool {
-		if ( ! is_array( $existing ) || true !== ( $existing['overwrite_on_register'] ?? null ) ) {
+		if ( ! is_array( $existing ) ) {
 			return false;
+		}
+
+		if ( true !== ( $existing['overwrite_on_register'] ?? null ) ) {
+			// The Etch editor drops this internal flag whenever it saves the
+			// style option. Without it, only an exact match inside the style's
+			// own non-default collection still proves Builder authorship.
+			$collection = $existing['collection'] ?? null;
+			if ( array_key_exists( 'overwrite_on_register', $existing )
+				|| ! is_string( $collection )
+				|| EditorStyleDuplicates::EDITOR_COLLECTION === $collection
+				|| $collection !== ( $payload['collection'] ?? null )
+			) {
+				return false;
+			}
 		}
 
 		foreach ( array( 'selector', 'css', 'type' ) as $field ) {
@@ -1147,6 +1167,173 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		}
 
 		return true;
+	}
+
+	/** {@inheritdoc} */
+	public function adopt_editor_style_duplicates( SitePersistenceRecord ...$records ): SitePersistenceReport {
+		return $this->reconcile_editor_style_duplicates( array_values( $records ), true );
+	}
+
+	/** {@inheritdoc} */
+	public function inspect_editor_style_duplicates( SitePersistenceRecord ...$records ): SitePersistenceReport {
+		return $this->reconcile_editor_style_duplicates( array_values( $records ), false );
+	}
+
+	/**
+	 * Classify, and optionally adopt, editor duplicates of code-owned styles.
+	 *
+	 * @param array<int, SitePersistenceRecord> $records
+	 */
+	private function reconcile_editor_style_duplicates( array $records, bool $write ): SitePersistenceReport {
+		if ( ! \function_exists( 'get_option' ) || ( $write && ! \function_exists( 'update_option' ) ) ) {
+			return SitePersistenceReport::new();
+		}
+
+		$styles = \get_option( self::STYLES_OPTION, array() );
+		if ( ! is_array( $styles ) ) {
+			return SitePersistenceReport::new();
+		}
+
+		$stored_aliases = \get_option( EditorStyleDuplicates::ALIASES_OPTION, array() );
+		$aliases        = EditorStyleDuplicates::aliases( $stored_aliases );
+		$ledger         = EditorStyleDuplicates::ledger_selectors( \get_option( self::RESOURCE_RECORDS_OPTION, array() ) );
+
+		/** @var array<string, array<int, array{id: string, payload: array<string, mixed>}>> $canonicals */
+		$canonicals = array();
+		foreach ( $records as $record ) {
+			$selector = EditorStyleDuplicates::single_class_selector( $record->payload() );
+			if ( CompiledSiteResourceType::STYLE->value !== $record->kind() || null === $selector ) {
+				continue;
+			}
+			$canonicals[ $selector ][] = array(
+				'id'      => substr( $record->identity(), strlen( 'style:' ) ),
+				'payload' => $record->payload(),
+			);
+		}
+
+		$next_styles  = $styles;
+		$next_aliases = $aliases;
+		$results      = array();
+		$notices      = array();
+
+		foreach ( $styles as $duplicate_id => $duplicate ) {
+			$duplicate_id = (string) $duplicate_id;
+			$selector     = EditorStyleDuplicates::single_class_selector( $duplicate );
+			if ( ! is_array( $duplicate ) || null === $selector || 1 !== count( $canonicals[ $selector ] ?? array() ) ) {
+				continue;
+			}
+
+			$canonical_id = $canonicals[ $selector ][0]['id'];
+			$payload      = $canonicals[ $selector ][0]['payload'];
+			if ( $duplicate_id === $canonical_id
+				|| isset( $ledger[ $duplicate_id ] )
+				|| EditorStyleDuplicates::is_code_collection( $duplicate )
+				|| ! EditorStyleDuplicates::is_editor_collection( $duplicate )
+			) {
+				continue;
+			}
+
+			$alias   = $aliases[ $duplicate_id ] ?? null;
+			$tracked = null !== $alias
+				&& $canonical_id === $alias['canonical']
+				&& EditorStyleDuplicates::payload_hash( $duplicate ) === $alias['hash'];
+			$adoptable = $tracked
+				|| EditorStyleDuplicates::is_empty_placeholder( $duplicate )
+				|| EditorStyleDuplicates::css_matches( (string) ( $duplicate['css'] ?? '' ), (string) ( $payload['css'] ?? '' ) );
+
+			if ( ! $adoptable ) {
+				unset( $next_aliases[ $duplicate_id ] );
+				$notices[] = CompiledSiteDiagnostic::new(
+					'ETCH_SITE_PERSISTENCE_STYLE_EDITOR_DUPLICATE_DIVERGENT',
+					CompiledSiteDiagnosticSeverity::WARNING,
+					sprintf(
+						'Etch style "%1$s" in the default collection uses the code-owned selector %2$s but holds different CSS, so it was left untouched. Elements the Etch editor linked to it do not get the CSS of code-owned style "%3$s". Move any CSS worth keeping into the code-owned CSS file, then delete style "%1$s" in the Etch editor and sync again.',
+						$duplicate_id,
+						$selector,
+						$canonical_id
+					),
+					'style:' . $duplicate_id
+				);
+				continue;
+			}
+
+			$mirror = EditorStyleDuplicates::mirror_payload( $duplicate, $payload );
+			if ( $tracked && $mirror === $duplicate ) {
+				continue;
+			}
+
+			if ( ! $write ) {
+				$notices[] = CompiledSiteDiagnostic::new(
+					'ETCH_SITE_PERSISTENCE_STYLE_EDITOR_DUPLICATE_ADOPTABLE',
+					CompiledSiteDiagnosticSeverity::INFO,
+					sprintf(
+						'Etch style "%1$s" in the default collection is an editor duplicate of code-owned style "%2$s" (selector %3$s). The next site apply makes it mirror the code-owned CSS.',
+						$duplicate_id,
+						$canonical_id,
+						$selector
+					),
+					'style:' . $duplicate_id
+				);
+				continue;
+			}
+
+			$next_styles[ $duplicate_id ]  = $mirror;
+			$next_aliases[ $duplicate_id ] = array(
+				'canonical' => $canonical_id,
+				'hash'      => EditorStyleDuplicates::payload_hash( $mirror ),
+			);
+			if ( null !== $alias && $canonical_id === $alias['canonical'] && $mirror === $duplicate ) {
+				// The editor re-saved an unchanged mirror; only the tracking hash moves.
+				continue;
+			}
+			$results[] = SitePersistenceResult::new(
+				'style:' . $duplicate_id,
+				SitePersistenceOutcome::UPDATED,
+				'ETCH_SITE_PERSISTENCE_STYLE_EDITOR_DUPLICATE_ADOPTED',
+				sprintf(
+					'Etch editor style "%1$s" for selector %2$s now mirrors code-owned style "%3$s", so elements linked to either style render the same CSS.',
+					$duplicate_id,
+					$selector,
+					$canonical_id
+				)
+			);
+		}
+
+		if ( ! $write ) {
+			return SitePersistenceReport::new( array(), array(), $notices );
+		}
+
+		foreach ( array_keys( $next_aliases ) as $alias_id ) {
+			if ( ! array_key_exists( $alias_id, $next_styles ) ) {
+				unset( $next_aliases[ $alias_id ] );
+			}
+		}
+
+		$failed = $this->update_options_atomically( array(
+			array(
+				'option' => self::STYLES_OPTION,
+				'before' => $styles,
+				'after'  => $next_styles,
+			),
+			array(
+				'option' => EditorStyleDuplicates::ALIASES_OPTION,
+				'before' => $stored_aliases,
+				'after'  => $next_aliases,
+			),
+		) );
+		if ( null !== $failed ) {
+			$results = array_map(
+				static fn ( SitePersistenceResult $result ): SitePersistenceResult => SitePersistenceResult::new(
+					$result->identity(),
+					SitePersistenceOutcome::FAILED,
+					'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE',
+					sprintf( 'WordPress could not update "%s" while adopting Etch editor style duplicates; prior writes were rolled back.', $failed )
+				),
+				$results
+			);
+		}
+
+		return SitePersistenceReport::new( $results, array(), $notices );
 	}
 
 	private function persist_asset( SitePersistenceRecord $record, bool $update ): RegistrationResult {
@@ -1230,7 +1417,36 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 			unset( $next[ $style_id ] );
 		}
 
-		if ( ! $this->update_option_if_changed( self::STYLES_OPTION, $styles, $next ) ) {
+		// Mirrors of the removed style go back to the empty editor style Etch
+		// created, so elements linked to them keep a valid style reference.
+		// A mirror a person edited since it was adopted is only released.
+		$stored_aliases = \get_option( EditorStyleDuplicates::ALIASES_OPTION, array() );
+		$next_aliases   = EditorStyleDuplicates::aliases( $stored_aliases );
+		foreach ( $next_aliases as $alias_id => $alias ) {
+			if ( $style_id !== $alias['canonical'] ) {
+				continue;
+			}
+			$mirror = $next[ $alias_id ] ?? null;
+			if ( is_array( $mirror ) && EditorStyleDuplicates::payload_hash( $mirror ) === $alias['hash'] ) {
+				$mirror['css']      = '';
+				$next[ $alias_id ] = $mirror;
+			}
+			unset( $next_aliases[ $alias_id ] );
+		}
+
+		$failed = $this->update_options_atomically( array(
+			array(
+				'option' => self::STYLES_OPTION,
+				'before' => $styles,
+				'after'  => $next,
+			),
+			array(
+				'option' => EditorStyleDuplicates::ALIASES_OPTION,
+				'before' => $stored_aliases,
+				'after'  => $next_aliases,
+			),
+		) );
+		if ( null !== $failed ) {
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_PARTIAL_WRITE', 'WordPress could not remove the recorded native Etch style.' );
 		}
 

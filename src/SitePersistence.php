@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace HonestlyDesign\EtchBuilders;
 
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceApplyLockInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceEditorStyleDuplicateInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceRecordAdoptionInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceNativeRetirementInterface;
@@ -114,14 +115,45 @@ class SitePersistence implements SitePersistenceInterface {
 					: $this->apply_record( $record );
 			}
 
+			$duplicates = $this->adopt_editor_style_duplicates( $records, $results );
+			$results    = array_merge( $results, $duplicates->results() );
+
 			if ( ! $plan->is_partial() && $this->all_results_succeeded( $results ) && $this->store instanceof SitePersistenceResourceStoreInterface ) {
 				$this->cleanup_orphan_resources( $plan, $results );
 			}
 
-			return SitePersistenceReport::new( $results );
+			return SitePersistenceReport::new( $results, array(), $duplicates->notices() );
 		} finally {
 			$lock?->release_site_apply_lock();
 		}
+	}
+
+	/**
+	 * Describe what needs a person's attention for this plan, without writing.
+	 *
+	 * Returns a report with notices only, for verification tooling: Etch
+	 * editor duplicates of code-owned styles (adoptable ones and ones a person
+	 * filled with other CSS) and, for a complete plan, Builder-owned entities
+	 * the plan no longer contains.
+	 */
+	public function diagnose( CompiledSitePlan $plan ): SitePersistenceReport {
+		$notices = array();
+
+		if ( $this->store instanceof SitePersistenceEditorStyleDuplicateInterface ) {
+			$styles = array_map(
+				fn ( CompiledSiteResource $style ): SitePersistenceRecord => SitePersistenceRecord::from_resource( $style, true, $this->ownership_for( $plan, $style->identity() ) ),
+				$plan->styles()
+			);
+			if ( array() !== $styles ) {
+				try {
+					$notices = $this->store->inspect_editor_style_duplicates( ...$styles )->notices();
+				} catch ( Throwable $throwable ) {
+					$notices[] = CompiledSiteDiagnostic::new( 'ETCH_SITE_PERSISTENCE_FAILED', CompiledSiteDiagnosticSeverity::WARNING, $throwable->getMessage() ?: 'Editor style duplicates could not be inspected.' );
+				}
+			}
+		}
+
+		return SitePersistenceReport::new( array(), array(), $notices );
 	}
 
 	/**
@@ -324,6 +356,39 @@ class SitePersistence implements SitePersistenceInterface {
 
 		if ( array() !== $records ) {
 			$this->store->adopt_unowned_stylesheet_records( ...$records );
+		}
+	}
+
+	/**
+	 * Heal Etch editor duplicates of the styles this apply persisted.
+	 *
+	 * Runs after the per-record writes so only styles that are now owned by
+	 * this plan can be mirrored.
+	 *
+	 * @param array<int, array{record: SitePersistenceRecord, intent: CompiledSiteEntityPersistenceIntent}> $entries
+	 * @param array<int, SitePersistenceResult>                                                             $results
+	 */
+	private function adopt_editor_style_duplicates( array $entries, array $results ): SitePersistenceReport {
+		if ( ! $this->store instanceof SitePersistenceEditorStyleDuplicateInterface ) {
+			return SitePersistenceReport::new();
+		}
+
+		$styles = array();
+		foreach ( $entries as $index => $entry ) {
+			$record = $entry['record'];
+			if ( CompiledSiteResourceType::STYLE->value === $record->kind() && ( $results[ $index ] ?? null )?->is_success() ) {
+				$styles[] = $record;
+			}
+		}
+
+		if ( array() === $styles ) {
+			return SitePersistenceReport::new();
+		}
+
+		try {
+			return $this->store->adopt_editor_style_duplicates( ...$styles );
+		} catch ( Throwable $throwable ) {
+			return SitePersistenceReport::new( array( self::failure( 'style:editor-duplicates', $throwable ) ) );
 		}
 	}
 
