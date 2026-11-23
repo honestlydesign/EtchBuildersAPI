@@ -21,12 +21,12 @@ Use this changelog as an end-user document, not a developer log.
 
 - Pages, posts, and templates can now be created once and then handed over to editors. Mark the content with `hand_over_after_create()`: the first site apply creates it, and later applies leave it alone. Edits made in WordPress are kept, later code changes to that content are not applied, and the apply reports it as unchanged. Its class styles and stylesheets stay managed by code. Remove the call to make code own the content again; the next apply then writes the code version.
 - Existing WordPress content can now be brought under code ownership. Add `adopt_existing()` to a page, post, or template whose slug or ID matches a page someone created in wp-admin. The next apply takes over that page instead of stopping with a conflict. It keeps the post ID and URL and replaces the content with the code version; WordPress keeps the old content as a revision. Combined with `hand_over_after_create()`, the page keeps its current content and only changes owner. Adoption refuses when several records match or when the only match is a translation.
-- Site applies now tell you when Builder-owned content is no longer in the Site Definition. A page you removed from code stays online as before, but the apply report lists it with what you can do next. A new explicit command moves those pages and posts to draft. Drafts keep their URL, revisions, and settings, and WordPress never empties drafts automatically. When the page returns to code, the next apply restores its previous status. The front page, the posts page, handed-over content, components, patterns, and templates are only reported, never moved to draft.
+- Site applies now tell you when Builder-owned content is no longer in the Site Definition. A page you removed from code stays online as before, but the apply report lists it with what you can do next. When you are ready, a separate retire step (a PHP method your site plugin can call) moves those pages and posts to draft. Drafts keep their ID, slug, revisions, and settings, and WordPress never empties drafts automatically. When the page returns to code, the next apply restores its previous status. The front page, the posts page, handed-over content, components, patterns, and templates are only reported, never moved to draft.
 
 ### FIX
 
 - Class styles created through the Etch editor no longer break code-owned styles. When someone pastes, moves, or edits an element in Etch, Etch can create an empty copy of a code-owned class style in its own style list. That copy used to make later site applies fail with "Multiple existing Etch styles use selector", and the element lost its styling on the website. Applies now keep the code-owned style. Empty and identical copies follow the code-owned CSS, so linked elements render correctly again. Settings that the Etch editor drops when it saves are restored. A copy that someone filled with different CSS is never overwritten; the apply reports it and tells you how to resolve it.
-- Applies of part of a site, for example a component-only first stage, no longer delete the styles and website stylesheets of the pages, templates, and site settings outside that stage. A later full apply now reports those styles as unchanged instead of creating them again.
+- Applies of part of a site, for example a component-only first stage, no longer delete the styles and website stylesheets of the pages, templates, and site settings outside that stage. Once the earlier stages are marked as partial, a later full apply reports those styles as unchanged instead of creating them again.
 - When you remove a page from code, its styles now stay until the page itself is trashed or deleted, so a page that is still online keeps its look.
 - Sites with WPML translations no longer fail with "Multiple native Site entities claim this identity". Translations that copied the Builder's ownership details are recognised and set aside, and applies never write to a translation. Sites without WPML are unaffected.
 
@@ -39,8 +39,8 @@ Use this changelog as an end-user document, not a developer log.
 
 - `overwrite()` has no effect on compiled site applies. Those applies always write code-owned content, which matches 2.0.x behaviour. Use `hand_over_after_create()` for content that editors should own.
 - Pages registered through the older direct registration path, before compiled site applies, carry no ownership record. A compiled apply therefore treats them like wp-admin pages. Use `adopt_existing()` to bring them under code. Setting the ownership post meta by hand also still works.
-- Staged site registration (a component bootstrap before the full site) should mark every stage except the last as partial, with `$plan->as_partial()`. Otherwise the bootstrap stage removes the styles of every page and template on each run.
-- Multilingual sites: the plugin that ships your site should tell WPML not to copy the `etch_builders_site_persistence_*` post meta. This package now handles copied meta safely either way.
+- If your site registers in stages (for example components first, then the full site), every stage except the last must be marked as partial. Otherwise the early stage removes the styles of every page and template on each run, and reports them as removed from code.
+- Multilingual sites: the plugin that ships your site should tell WPML not to copy the Builder's ownership details to translations. This package now handles copied details safely either way.
 - 2.0.x migration reports re-checked for this release:
   - The 2.0.4 package archive installs and autoloads normally.
   - Nested loops without a loop preset have had a regression test since 2.0.4.
@@ -86,11 +86,13 @@ Use this changelog as an end-user document, not a developer log.
   3. The package filter.
 
   A slug lookup that matches only translations maps to the original through `wpml_object_id`, or fails closed as a conflict. ID-targeted identities are not filtered. This was tested against stubbed filters only, not a real WPML install.
-- Devkit follow-ups (not in this package):
-  - Call `->as_partial()` on bootstrap stage plans.
+- Partial stages: call `$plan->as_partial()` on every stage plan except the last. A non-partial stage plan reports every page and template outside it as an orphan, and `retire_orphans()` must only ever receive the full plan.
+- WPML: a site plugin's `wpml-config.xml` should mark the `etch_builders_site_persistence_*` post meta as not copied (`ignore`).
+- Devkit follow-ups (not in this package), in this order:
+  - Call `->as_partial()` on bootstrap stage plans. Do this first, before notices are printed.
   - Remove the pre-register style wipe in `scripts/localwp/sync.mjs`. It makes every style report as created.
   - Print `notices()` from apply reports, and call `diagnose()` during verify.
-  - Treat `CREATE_ONLY` entities as owned but not content-compared in `SiteRuntimeVerification`.
+  - Treat `CREATE_ONLY` entities as owned but not content-compared in `SiteRuntimeVerification`. Until then, `localwp:verify` fails for projects that use `hand_over_after_create()`.
   - Tie the PROD registration lock to the plugin version or plan digest, and back off after a failure.
   - Ship a `wpml-config.xml` that tells WPML not to copy the Builder meta.
 
