@@ -11,6 +11,8 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit;
 
 use HonestlyDesign\EtchBuilders\ClassStyleRegistry;
 use HonestlyDesign\EtchBuilders\CompiledSiteDiagnostic;
+use HonestlyDesign\EtchBuilders\CompiledSiteEntity;
+use HonestlyDesign\EtchBuilders\CompiledSiteEntityType;
 use HonestlyDesign\EtchBuilders\CompiledSiteOwnership;
 use HonestlyDesign\EtchBuilders\CompiledSitePlan;
 use HonestlyDesign\EtchBuilders\CompiledSiteResource;
@@ -293,6 +295,31 @@ final class EditorStyleDuplicateTest extends TestCase {
 		$report = ( new WordPressSitePersistence() )->apply( $this->plan() );
 
 		self::assertSame( array( 'style:component-site-nav' => 'created' ), $this->outcomes( $report ) );
+	}
+
+	/**
+	 * @runInSeparateProcess
+	 * @preserveGlobalState disabled
+	 */
+	public function test_cleanup_decides_what_to_remove_only_once_it_holds_the_apply_lock(): void {
+		$this->install_wordpress();
+		$persistence = new WordPressSitePersistence();
+		$persistence->apply( $this->plan() );
+		$style = CompiledSiteResource::new( CompiledSiteResourceType::STYLE, 'style:component-site-nav', $this->owned_payload() );
+		$landing = CompiledSitePlan::from_sections(
+			entities: array( CompiledSiteEntity::new( CompiledSiteEntityType::PAGE, 'page:slug:landing', array( 'slug' => 'landing', 'blocks' => 'landing' ) ) ),
+			styles: array( $style ),
+			ownership: array( CompiledSiteOwnership::new( 'page:slug:landing', $style->identity(), 'style' ) )
+		);
+		// Another request applies a page that now owns the style while this one waits for the lock.
+		$GLOBALS['etch_builders_site_persistence_before_add_option']['etch_builders_site_apply_lock'] = static function () use ( $landing ): void {
+			self::assertTrue( ( new WordPressSitePersistence() )->apply( $landing )->is_success() );
+		};
+
+		$report = $persistence->apply( CompiledSitePlan::empty() );
+
+		self::assertTrue( $report->is_success() );
+		self::assertArrayHasKey( 'component-site-nav', $this->option( 'etch_styles' ), 'The style belongs to a live page by the time the lock is held.' );
 	}
 
 	private function plan(): CompiledSitePlan {

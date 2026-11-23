@@ -92,6 +92,12 @@ final class WordPressPersistenceStubs {
 		if ( ! function_exists( 'add_option' ) ) {
 			function add_option( string $option, mixed $value = '', string $deprecated = '', bool $autoload = true ): bool {
 				etch_builders_site_persistence_record_write( 'add_option' );
+				// Lets a test run another request's work just before this option is claimed.
+				$before = $GLOBALS['etch_builders_site_persistence_before_add_option'][ $option ] ?? null;
+				if ( null !== $before ) {
+					unset( $GLOBALS['etch_builders_site_persistence_before_add_option'][ $option ] );
+					$before();
+				}
 				$options = $GLOBALS['etch_builders_site_persistence_options'] ?? array();
 				if ( array_key_exists( $option, $options ) ) {
 					return false;

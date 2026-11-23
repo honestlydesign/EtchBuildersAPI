@@ -22,9 +22,12 @@ use HonestlyDesign\EtchBuilders\CompiledSiteResourceType;
 use HonestlyDesign\EtchBuilders\EtchBlocks\TextBlock;
 use HonestlyDesign\EtchBuilders\Page;
 use HonestlyDesign\EtchBuilders\SiteDefinition;
+use HonestlyDesign\EtchBuilders\SitePersistence;
 use HonestlyDesign\EtchBuilders\SitePersistenceReport;
 use HonestlyDesign\EtchBuilders\SitePersistenceResult;
 use HonestlyDesign\EtchBuilders\Support\WordPressSitePersistence;
+use HonestlyDesign\EtchBuilders\Support\WordPressSitePersistenceStore;
+use HonestlyDesign\EtchBuilders\Tests\Unit\Support\NoLockSitePersistenceStore;
 use HonestlyDesign\EtchBuilders\Tests\Unit\Support\WordPressPersistenceStubs;
 use PHPUnit\Framework\TestCase;
 
@@ -172,6 +175,67 @@ final class SitePersistenceLifecycleTest extends TestCase {
 		self::assertSame( array( 'page:slug:a' => 'ETCH_SITE_PERSISTENCE_ORPHAN_RETIRED' ), $this->result_codes( $persistence->retire_orphans( $home, array( 'page:slug:a' ) ) ) );
 	}
 
+	public function test_retirement_refuses_a_plan_whose_site_was_changed_outside_its_apply(): void {
+		$home = $this->pages_plan( 'home' );
+		$outside_writes = array(
+			'an older package rewrote a page'      => function (): void {
+				$this->post( 'home' )->post_content = 'written by 2.0.6 from another plan';
+			},
+			'an older package changed the ledger'  => function (): void {
+				$GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_resources']['style:other'] = array( 'identity' => 'style:other' );
+			},
+			'another package version recorded it'  => function (): void {
+				$GLOBALS['etch_builders_site_persistence_options']['etch_builders_site_persistence_complete_plan']['version'] = '2.1.0-other@0000';
+			},
+		);
+		foreach ( $outside_writes as $case => $write ) {
+			$GLOBALS['etch_builders_site_persistence_options'] = array();
+			$GLOBALS['etch_builders_site_persistence_posts']   = array();
+			$GLOBALS['etch_builders_site_persistence_meta']    = array();
+			$persistence = new WordPressSitePersistence();
+			$persistence->apply( $this->pages_plan( 'home', 'a' ) );
+			$persistence->apply( $home );
+			$write();
+
+			$refused = $persistence->retire_orphans( $home, array( 'page:slug:a' ) );
+			self::assertTrue( $refused->was_blocked(), $case );
+			self::assertSame( 'ETCH_SITE_PERSISTENCE_ORPHANS_PLAN_STALE', $refused->blocking_diagnostics()[0]->code(), $case );
+			self::assertSame( 'publish', $this->post( 'a' )->post_status, $case );
+
+			self::assertTrue( $persistence->apply( $home )->is_success(), $case );
+			self::assertSame( array( 'page:slug:a' => 'ETCH_SITE_PERSISTENCE_ORPHAN_RETIRED' ), $this->result_codes( $persistence->retire_orphans( $home, array( 'page:slug:a' ) ) ), $case );
+		}
+	}
+
+	public function test_retiring_one_orphan_keeps_the_plan_current_for_the_next(): void {
+		$persistence = new WordPressSitePersistence();
+		$home        = $this->pages_plan( 'home' );
+		$persistence->apply( $this->pages_plan( 'home', 'a', 'b' ) );
+		$persistence->apply( $home );
+
+		$persistence->retire_orphans( $home, array( 'page:slug:a' ) );
+		$second = $persistence->retire_orphans( $home, array( 'page:slug:b' ) );
+
+		self::assertSame( array( 'page:slug:b' => 'ETCH_SITE_PERSISTENCE_ORPHAN_RETIRED' ), $this->result_codes( $second ) );
+		self::assertSame( 'draft', $this->post( 'b' )->post_status );
+	}
+
+	public function test_a_store_without_the_apply_lock_still_forgets_the_plan_another_apply_replaces(): void {
+		$store       = new NoLockSitePersistenceStore( new WordPressSitePersistenceStore() );
+		$persistence = new SitePersistence( $store );
+		$home        = $this->pages_plan( 'home' );
+		$persistence->apply( $this->pages_plan( 'home', 'a' ) );
+		$persistence->apply( $home );
+
+		$GLOBALS['etch_builders_site_persistence_fail_meta'] = 'etch_builders_site_persistence_record';
+		self::assertFalse( $persistence->apply( CompiledSitePlan::from_sections( entities: array( $this->page_entity( 'home', 'changed in code' ), $this->page_entity( 'a' ) ) ) )->is_success() );
+		unset( $GLOBALS['etch_builders_site_persistence_fail_meta'] );
+
+		self::assertNull( $store->complete_plan_digest(), 'The replaced plan is forgotten even without a lock.' );
+		self::assertTrue( $persistence->retire_orphans( $home, array( 'page:slug:a' ) )->was_blocked() );
+		self::assertSame( 'publish', $this->post( 'a' )->post_status );
+	}
+
 	public function test_an_id_targeted_page_is_not_an_orphan_of_its_old_slug_identity(): void {
 		$persistence = new WordPressSitePersistence();
 		$persistence->apply( $this->pages_plan( 'a', 'b' ) );
@@ -263,6 +327,11 @@ final class SitePersistenceLifecycleTest extends TestCase {
 			self::assertSame( array( 'page:slug:welcome' => 'ETCH_SITE_PERSISTENCE_HANDED_OVER_MISSING' ), $this->result_codes( $again ), $change );
 			self::assertCount( 'deleted' === $change ? 0 : 1, $GLOBALS['etch_builders_site_persistence_posts'], $change );
 		}
+
+		$managed = $persistence->apply( $this->welcome_plan( 'code v2', false ) );
+		self::assertFalse( $managed->is_success(), 'Code managing content that is gone must not read as current.' );
+		self::assertSame( array( 'page:slug:welcome' => 'ETCH_SITE_PERSISTENCE_HANDED_OVER_RECLAIM_REQUIRED' ), $this->result_codes( $managed ) );
+		self::assertCount( 0, $GLOBALS['etch_builders_site_persistence_posts'] );
 
 		$recreated = $persistence->apply( $this->welcome_plan( 'code v1', true, reclaim: true ) );
 		self::assertSame( array( 'page:slug:welcome' => 'ETCH_SITE_PERSISTENCE_CREATED' ), $this->result_codes( $recreated ) );

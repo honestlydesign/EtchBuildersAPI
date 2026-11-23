@@ -2454,8 +2454,13 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 			: RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_META_FAILED', 'WordPress could not remove the ownership metadata.' );
 	}
 
-	/** {@inheritdoc} */
-	public function owned_native_entities(): array {
+	/**
+	 * Every published, scheduled, draft, pending, or private post that carries
+	 * the Builder owner meta, in ID order.
+	 *
+	 * @return array<int, object>
+	 */
+	private function owned_posts(): array {
 		if ( ! \function_exists( 'get_posts' ) || ! \function_exists( 'get_post_types' ) || ! \function_exists( 'get_post_meta' ) ) {
 			return array();
 		}
@@ -2473,6 +2478,12 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 			)
 		);
 
+		return array_values( array_filter( $posts, 'is_object' ) );
+	}
+
+	/** {@inheritdoc} */
+	public function owned_native_entities(): array {
+		$posts     = $this->owned_posts();
 		$protected = $this->protected_post_ids();
 		$entities  = array();
 		foreach ( $posts as $post ) {
@@ -2635,9 +2646,89 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_RUNTIME_UNAVAILABLE', 'WordPress option functions are unavailable.' );
 		}
 
-		return $this->update_option_if_changed( self::COMPLETE_PLAN_OPTION, \get_option( self::COMPLETE_PLAN_OPTION, null ), $digest )
+		$current = \get_option( self::COMPLETE_PLAN_OPTION, null );
+		$next    = array(
+			'digest'      => $digest,
+			'version'     => self::package_version(),
+			'fingerprint' => $this->site_fingerprint(),
+			'recorded_at' => time(),
+		);
+		if ( is_array( $current ) && isset( $current['recorded_at'] ) ) {
+			// Same plan, package, and site: keep the record instead of rewriting it on every apply.
+			$unchanged = $next;
+			$unchanged['recorded_at'] = $current['recorded_at'];
+			if ( $unchanged === $current ) {
+				return RegistrationResult::success();
+			}
+		}
+
+		return $this->update_option_if_changed( self::COMPLETE_PLAN_OPTION, $current, $next )
 			? RegistrationResult::success()
 			: RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_UPDATE_FAILED', 'WordPress could not record the applied plan.' );
+	}
+
+	/** {@inheritdoc} */
+	public function complete_plan_is_current(): bool {
+		$stored = \function_exists( 'get_option' ) ? \get_option( self::COMPLETE_PLAN_OPTION, null ) : null;
+		if ( ! is_array( $stored ) || ! isset( $stored['fingerprint'] ) || ! is_string( $stored['fingerprint'] ) || ! array_key_exists( 'version', $stored ) ) {
+			return false;
+		}
+
+		return self::package_version() === $stored['version'] && hash_equals( $stored['fingerprint'], $this->site_fingerprint() );
+	}
+
+	/**
+	 * The installed package version and reference, when Composer can tell.
+	 *
+	 * A digest recorded by another package version is not trusted: a
+	 * downgrade in between may have applied a different plan.
+	 */
+	private static function package_version(): ?string {
+		$package = 'honestlydesign/etch-builders';
+		if ( ! class_exists( \Composer\InstalledVersions::class ) || ! \Composer\InstalledVersions::isInstalled( $package ) ) {
+			return null;
+		}
+
+		return \Composer\InstalledVersions::getPrettyVersion( $package ) . '@' . \Composer\InstalledVersions::getReference( $package );
+	}
+
+	/**
+	 * A digest of what any apply, from any package version, writes.
+	 *
+	 * Covers the resource and entity ledgers and every code-owned post
+	 * (handed-over content and translations excluded, since editors change
+	 * them freely). Any write outside the recorded apply, such as an older
+	 * package applying another plan, changes it.
+	 */
+	private function site_fingerprint(): string {
+		$posts = array();
+		foreach ( $this->owned_posts() as $post ) {
+			$post_id = $this->post_id( $post );
+			if ( $post_id < 1 || self::OWNER_VALUE !== (string) \get_post_meta( $post_id, self::OWNER_META, true ) || $this->is_translation( $post ) ) {
+				continue;
+			}
+			$values            = get_object_vars( $post );
+			$posts[ $post_id ] = array(
+				(string) ( $values['post_type'] ?? '' ),
+				(string) ( $values['post_status'] ?? '' ),
+				(string) ( $values['post_name'] ?? '' ),
+				(string) ( $values['post_modified_gmt'] ?? '' ),
+				hash( 'sha256', (string) ( $values['post_content'] ?? '' ) ),
+			);
+		}
+		ksort( $posts );
+
+		return hash(
+			'sha256',
+			(string) json_encode(
+				array(
+					\get_option( self::RESOURCE_RECORDS_OPTION, array() ),
+					\get_option( self::ENTITY_RECORDS_OPTION, array() ),
+					$posts,
+				),
+				JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION | JSON_INVALID_UTF8_SUBSTITUTE
+			)
+		);
 	}
 
 	/** {@inheritdoc} */
@@ -2657,7 +2748,8 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 
 	/** {@inheritdoc} */
 	public function complete_plan_digest(): ?string {
-		$digest = \function_exists( 'get_option' ) ? \get_option( self::COMPLETE_PLAN_OPTION, null ) : null;
+		$stored = \function_exists( 'get_option' ) ? \get_option( self::COMPLETE_PLAN_OPTION, null ) : null;
+		$digest = is_array( $stored ) ? ( $stored['digest'] ?? null ) : $stored;
 
 		return is_string( $digest ) && '' !== $digest ? $digest : null;
 	}

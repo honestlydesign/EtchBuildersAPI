@@ -98,7 +98,7 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		try {
-			$forgotten = $this->forget_other_complete_plan( $plan, null !== $lock );
+			$forgotten = $this->forget_other_complete_plan( $plan, $mutates );
 			if ( null !== $forgotten ) {
 				return SitePersistenceReport::new( array( $forgotten ) );
 			}
@@ -245,14 +245,22 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		try {
+			$digest = self::plan_digest( $plan );
 			try {
 				$applied = $this->store->complete_plan_digest();
+				$current = null !== $applied && $this->store->complete_plan_is_current();
 			} catch ( Throwable ) {
 				$applied = null;
+				$current = false;
 			}
-			if ( null === $applied || ! hash_equals( $applied, self::plan_digest( $plan ) ) ) {
+			if ( null === $applied || ! hash_equals( $applied, $digest ) ) {
 				return SitePersistenceReport::new( array(), array(
 					CompiledSiteDiagnostic::new( 'ETCH_SITE_PERSISTENCE_ORPHANS_PLAN_NOT_APPLIED', CompiledSiteDiagnosticSeverity::ERROR, 'This plan is not the complete plan the last successful apply wrote. Apply it successfully first; nothing was retired.' ),
+				) );
+			}
+			if ( ! $current ) {
+				return SitePersistenceReport::new( array(), array(
+					CompiledSiteDiagnostic::new( 'ETCH_SITE_PERSISTENCE_ORPHANS_PLAN_STALE', CompiledSiteDiagnosticSeverity::ERROR, 'The site changed after this plan was last applied (another package version, or content and ownership records written outside that apply). Apply the plan again first; nothing was retired.' ),
 				) );
 			}
 
@@ -290,6 +298,18 @@ class SitePersistence implements SitePersistenceInterface {
 					'ETCH_SITE_PERSISTENCE_ORPHAN_PROTECTED' === $retired->get_error_code() => SitePersistenceResult::new( $identity, SitePersistenceOutcome::SKIPPED, self::ORPHAN_KEPT, $retired->get_error_message() ),
 					default                                                             => self::registration_failure( $identity, $retired, 'The orphaned content could not be moved to draft.' ),
 				};
+			}
+
+			if ( array() !== array_filter( $results, static fn ( SitePersistenceResult $result ): bool => self::ORPHAN_RETIRED === $result->code() ) ) {
+				// Retiring changed code-owned content; the plan still describes the site, so record that.
+				try {
+					$recorded = $this->store->record_complete_plan_digest( $digest );
+					if ( ! $recorded->is_success() ) {
+						$results[] = self::registration_failure( 'site:complete-plan', $recorded, 'The applied plan could not be recorded after retiring.' );
+					}
+				} catch ( Throwable $throwable ) {
+					$results[] = self::failure( 'site:complete-plan', $throwable );
+				}
 			}
 
 			return SitePersistenceReport::new( $results );
@@ -641,6 +661,16 @@ class SitePersistence implements SitePersistenceInterface {
 				}
 			} catch ( Throwable $throwable ) {
 				return self::failure( $record->identity(), $throwable );
+			}
+			if ( $was_handed_over && ! $hand_over ) {
+				// Code manages this content again but it is gone; reporting it as
+				// unchanged would let verification read the code page as current.
+				return SitePersistenceResult::new(
+					$record->identity(),
+					SitePersistenceOutcome::CONFLICT,
+					'ETCH_SITE_PERSISTENCE_HANDED_OVER_RECLAIM_REQUIRED',
+					'Code manages this content again, but it was handed over to editors and they renamed, trashed, or deleted it. Add reclaim_from_editors() to create it from code again, or keep hand_over_after_create().'
+				);
 			}
 			if ( $was_handed_over ) {
 				// Editors renamed, trashed, or deleted content they own; never recreate it behind their back.
@@ -1111,6 +1141,42 @@ class SitePersistence implements SitePersistenceInterface {
 			return;
 		}
 
+		$deletable = $this->deletable_orphan_resources( $plan, $orphans );
+		if ( array() === $deletable ) {
+			return;
+		}
+
+		$lock = $needs_lock && $this->store instanceof SitePersistenceApplyLockInterface ? $this->store : null;
+		if ( null !== $lock && ! $lock->acquire_site_apply_lock() ) {
+			$results[] = SitePersistenceResult::new( 'site:cleanup', SitePersistenceOutcome::FAILED, 'ETCH_SITE_PERSISTENCE_APPLY_LOCKED', 'Another Site apply still holds the site-wide persistence lock, so resources removed from code were not cleaned up.' );
+
+			return;
+		}
+
+		try {
+			if ( null !== $lock ) {
+				// Another apply may have changed the ledger or the live content
+				// before this one got the lock; decide again from what is stored now.
+				$deletable = $this->deletable_orphan_resources( $plan, $this->orphan_entities( $plan ) );
+			}
+			$this->delete_orphan_resources( $deletable, $results );
+		} finally {
+			$lock?->release_site_apply_lock();
+		}
+	}
+
+	/**
+	 * Recorded resources absent from the plan whose owner is not live content.
+	 *
+	 * @param array<int, array{identity: string, kind: string, post_id: int, status: string, handed_over: bool, retired: bool, protected: bool}|CompiledSiteDiagnostic> $orphans
+	 *
+	 * @return array<int, SitePersistenceRecord>
+	 */
+	private function deletable_orphan_resources( CompiledSitePlan $plan, array $orphans ): array {
+		if ( ! $this->store instanceof SitePersistenceResourceStoreInterface ) {
+			return array();
+		}
+
 		$active = array_fill_keys(
 			array_map(
 				static fn ( CompiledSiteResource $resource ): string => $resource->identity(),
@@ -1122,7 +1188,7 @@ class SitePersistence implements SitePersistenceInterface {
 		foreach ( $orphans as $orphan ) {
 			if ( $orphan instanceof CompiledSiteDiagnostic ) {
 				// Without the list of live content, keeping every resource is the safe choice.
-				return;
+				return array();
 			}
 			$live_owners[ $orphan['identity'] ] = true;
 		}
@@ -1141,22 +1207,8 @@ class SitePersistence implements SitePersistenceInterface {
 			}
 			$deletable[] = $record;
 		}
-		if ( array() === $deletable ) {
-			return;
-		}
 
-		$lock = $needs_lock && $this->store instanceof SitePersistenceApplyLockInterface ? $this->store : null;
-		if ( null !== $lock && ! $lock->acquire_site_apply_lock() ) {
-			$results[] = SitePersistenceResult::new( 'site:cleanup', SitePersistenceOutcome::FAILED, 'ETCH_SITE_PERSISTENCE_APPLY_LOCKED', 'Another Site apply still holds the site-wide persistence lock, so resources removed from code were not cleaned up.' );
-
-			return;
-		}
-
-		try {
-			$this->delete_orphan_resources( $deletable, $results );
-		} finally {
-			$lock?->release_site_apply_lock();
-		}
+		return $deletable;
 	}
 
 	/**

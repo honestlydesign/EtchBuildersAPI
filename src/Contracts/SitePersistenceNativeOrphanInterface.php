@@ -52,8 +52,20 @@ interface SitePersistenceNativeOrphanInterface {
 
 	/**
 	 * Remember the digest of the complete plan the last fully successful apply wrote.
+	 *
+	 * Stores enough about the package and the site alongside it for
+	 * complete_plan_is_current() to notice later writes from elsewhere.
 	 */
 	public function record_complete_plan_digest( string $digest ): RegistrationResult;
+
+	/**
+	 * Whether the site is still exactly as the recorded apply left it.
+	 *
+	 * False when the digest was recorded by another package version, or when
+	 * the ownership ledgers or code-owned content changed since, for example
+	 * because an older package applied another plan.
+	 */
+	public function complete_plan_is_current(): bool;
 
 	/**
 	 * The digest recorded by record_complete_plan_digest(), or null.
