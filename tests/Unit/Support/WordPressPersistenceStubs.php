@@ -109,6 +109,10 @@ final class WordPressPersistenceStubs {
 				if ( ( $GLOBALS['etch_builders_site_persistence_failing_option'] ?? null ) === $option ) {
 					return false;
 				}
+				// Like WordPress, report false when the stored value is already identical.
+				if ( array_key_exists( $option, $GLOBALS['etch_builders_site_persistence_options'] ?? array() ) && $GLOBALS['etch_builders_site_persistence_options'][ $option ] === $value ) {
+					return false;
+				}
 
 				$GLOBALS['etch_builders_site_persistence_options'][ $option ] = $value;
 
@@ -209,6 +213,19 @@ final class WordPressPersistenceStubs {
 			}
 		}
 
+		if ( ! function_exists( 'wp_save_post_revision' ) ) {
+			function wp_save_post_revision( int $post_id ): ?int {
+				etch_builders_site_persistence_record_write( 'wp_save_post_revision' );
+				$post = $GLOBALS['etch_builders_site_persistence_posts'][ $post_id ] ?? null;
+				if ( null === $post ) {
+					return null;
+				}
+				$GLOBALS['etch_builders_site_persistence_revisions'][ $post_id ][] = array( 'post_content' => (string) $post->post_content );
+
+				return count( $GLOBALS['etch_builders_site_persistence_revisions'][ $post_id ] );
+			}
+		}
+
 		if ( ! function_exists( 'has_filter' ) ) {
 			function has_filter( string $hook_name, mixed $callback = false ): bool {
 				return isset( $GLOBALS['etch_builders_test_filters'][ $hook_name ] );
@@ -283,6 +300,11 @@ final class WordPressPersistenceStubs {
 			function update_post_meta( int $post_id, string $key, mixed $value ): bool {
 				etch_builders_site_persistence_record_write( 'update_post_meta' );
 				if ( ( $GLOBALS['etch_builders_site_persistence_fail_meta'] ?? null ) === $key ) {
+					return false;
+				}
+
+				// Like WordPress, report false when the stored value is already identical.
+				if ( array_key_exists( $key, $GLOBALS['etch_builders_site_persistence_meta'][ $post_id ] ?? array() ) && $GLOBALS['etch_builders_site_persistence_meta'][ $post_id ][ $key ] === $value ) {
 					return false;
 				}
 

@@ -98,6 +98,11 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		try {
+			$forgotten = $this->forget_other_complete_plan( $plan, null !== $lock );
+			if ( null !== $forgotten ) {
+				return SitePersistenceReport::new( array( $forgotten ) );
+			}
+
 			$this->adopt_unowned_stylesheet_assets( $records );
 
 			foreach ( $records as $entry ) {
@@ -351,6 +356,34 @@ class SitePersistence implements SitePersistenceInterface {
 		}
 
 		return $ordered;
+	}
+
+	/**
+	 * Clear the recorded complete plan before a different plan writes.
+	 *
+	 * retire_orphans() trusts the recorded digest to describe the site. A
+	 * later plan that fails halfway, or a partial stage, changes the site
+	 * without proving a complete state, so the old digest must not survive
+	 * it. Nothing has been written when this fails, so the apply stops.
+	 */
+	private function forget_other_complete_plan( CompiledSitePlan $plan, bool $writes ): ?SitePersistenceResult {
+		if ( ! $writes || ! $this->store instanceof SitePersistenceNativeOrphanInterface ) {
+			return null;
+		}
+
+		try {
+			$recorded = $this->store->complete_plan_digest();
+			if ( null === $recorded || self::plan_digest( $plan ) === $recorded ) {
+				return null;
+			}
+			$forgotten = $this->store->forget_complete_plan_digest();
+		} catch ( Throwable $throwable ) {
+			return self::failure( 'site:complete-plan', $throwable );
+		}
+
+		return $forgotten->is_success()
+			? null
+			: self::registration_failure( 'site:complete-plan', $forgotten, 'The previously applied plan could not be cleared.' );
 	}
 
 	private static function has_content_entities( CompiledSitePlan $plan ): bool {

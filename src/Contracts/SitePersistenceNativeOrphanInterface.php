@@ -59,4 +59,10 @@ interface SitePersistenceNativeOrphanInterface {
 	 * The digest recorded by record_complete_plan_digest(), or null.
 	 */
 	public function complete_plan_digest(): ?string;
+
+	/**
+	 * Drop the recorded digest before another plan starts writing, so a failed
+	 * or partial apply never leaves an older plan looking current.
+	 */
+	public function forget_complete_plan_digest(): RegistrationResult;
 }

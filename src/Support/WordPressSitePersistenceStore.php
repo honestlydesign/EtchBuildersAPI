@@ -2354,6 +2354,14 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		foreach ( self::CLAIM_SNAPSHOT_FIELDS as $field ) {
 			$fields[ $field ] = (string) ( $values[ $field ] ?? '' );
 		}
+		if ( $replaces_content && ! $this->content_matches( $record, $values ) && \function_exists( 'wp_save_post_revision' ) ) {
+			// WordPress only keeps the state after each save, so make sure the
+			// content about to be replaced is a revision before claiming it.
+			$revision = \wp_save_post_revision( $post_id );
+			if ( 0 === $revision || ( \function_exists( 'is_wp_error' ) && \is_wp_error( $revision ) ) ) {
+				return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ADOPTION_NO_REVISIONS', 'WordPress could not save the current content as a revision, so adoption was not started.' );
+			}
+		}
 		$this->claims[ $record->identity() ] = array(
 			'post_id' => $post_id,
 			'fields'  => $fields,
@@ -2630,6 +2638,21 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		return $this->update_option_if_changed( self::COMPLETE_PLAN_OPTION, \get_option( self::COMPLETE_PLAN_OPTION, null ), $digest )
 			? RegistrationResult::success()
 			: RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_UPDATE_FAILED', 'WordPress could not record the applied plan.' );
+	}
+
+	/** {@inheritdoc} */
+	public function forget_complete_plan_digest(): RegistrationResult {
+		if ( ! \function_exists( 'get_option' ) || ! \function_exists( 'delete_option' ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_RUNTIME_UNAVAILABLE', 'WordPress option functions are unavailable.' );
+		}
+		if ( null === \get_option( self::COMPLETE_PLAN_OPTION, null ) ) {
+			return RegistrationResult::success();
+		}
+
+		// delete_option() reports false for a value that is already gone; check what remains.
+		return \delete_option( self::COMPLETE_PLAN_OPTION ) || null === $this->complete_plan_digest()
+			? RegistrationResult::success()
+			: RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_UPDATE_FAILED', 'WordPress could not clear the recorded plan.' );
 	}
 
 	/** {@inheritdoc} */

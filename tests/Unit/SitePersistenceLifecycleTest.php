@@ -42,6 +42,8 @@ final class SitePersistenceLifecycleTest extends TestCase {
 		$GLOBALS['etch_builders_site_persistence_posts']   = array();
 		$GLOBALS['etch_builders_site_persistence_meta']    = array();
 		$GLOBALS['etch_builders_test_filters']             = array();
+		$GLOBALS['etch_builders_site_persistence_revisions'] = array();
+		unset( $GLOBALS['etch_builders_site_persistence_no_revisions'], $GLOBALS['etch_builders_site_persistence_fail_meta'] );
 	}
 
 	public function test_partial_bootstrap_apply_keeps_other_entities_styles_and_full_reapply_is_unchanged(): void {
@@ -144,6 +146,30 @@ final class SitePersistenceLifecycleTest extends TestCase {
 		foreach ( array( 'a', 'b', 'c' ) as $slug ) {
 			self::assertSame( 'publish', $this->post( $slug )->post_status );
 		}
+	}
+
+	public function test_reapplying_the_same_site_succeeds_and_only_a_successful_full_apply_enables_retirement(): void {
+		$persistence = new WordPressSitePersistence();
+		$home        = $this->pages_plan( 'home' );
+		$persistence->apply( $this->pages_plan( 'home', 'a' ) );
+		self::assertTrue( $persistence->apply( $home )->is_success() );
+
+		$again = $persistence->apply( $home );
+		self::assertTrue( $again->is_success(), 'Re-applying an unchanged site must not fail on values WordPress already holds.' );
+		self::assertSame( array(), $again->applied_results() );
+
+		$GLOBALS['etch_builders_site_persistence_fail_meta'] = 'etch_builders_site_persistence_record';
+		self::assertFalse( $persistence->apply( CompiledSitePlan::from_sections( entities: array( $this->page_entity( 'home', 'changed in code' ), $this->page_entity( 'a' ) ) ) )->is_success() );
+		unset( $GLOBALS['etch_builders_site_persistence_fail_meta'] );
+		self::assertTrue( $persistence->retire_orphans( $home, array( 'page:slug:a' ) )->was_blocked(), 'A failed apply of another plan leaves the site in no proven state.' );
+
+		$persistence->apply( $home );
+		$persistence->apply( $this->pages_plan( 'a' )->as_partial() );
+		self::assertTrue( $persistence->retire_orphans( $home, array( 'page:slug:a' ) )->was_blocked(), 'A partial stage applied after the full plan changes what the site holds.' );
+		self::assertSame( 'publish', $this->post( 'a' )->post_status );
+
+		$persistence->apply( $home );
+		self::assertSame( array( 'page:slug:a' => 'ETCH_SITE_PERSISTENCE_ORPHAN_RETIRED' ), $this->result_codes( $persistence->retire_orphans( $home, array( 'page:slug:a' ) ) ) );
 	}
 
 	public function test_an_id_targeted_page_is_not_an_orphan_of_its_old_slug_identity(): void {
@@ -279,6 +305,7 @@ final class SitePersistenceLifecycleTest extends TestCase {
 		self::assertTrue( $adopted->is_success() );
 		self::assertSame( array( 'page:slug:about' => 'ETCH_SITE_PERSISTENCE_ADOPTED' ), $this->result_codes( $adopted ) );
 		self::assertSame( 'code about', $this->post( 'about' )->post_content );
+		self::assertSame( array( 'written by hand' ), array_column( $GLOBALS['etch_builders_site_persistence_revisions'][ $this->post( 'about' )->ID ] ?? array(), 'post_content' ), 'The content adoption replaced is kept as a revision.' );
 		self::assertSame( 1, count( $GLOBALS['etch_builders_site_persistence_posts'] ), 'Adoption reuses the existing post.' );
 		self::assertSame( array( 'page:slug:about' => 'ETCH_SITE_PERSISTENCE_UNCHANGED' ), $this->result_codes( $persistence->apply( $this->about_plan( adopt: true ) ) ) );
 	}
