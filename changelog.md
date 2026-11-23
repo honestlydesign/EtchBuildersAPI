@@ -19,15 +19,17 @@ Use this changelog as an end-user document, not a developer log.
 
 ### FEATURE
 
-- Pages, posts, and templates can now be created once and then handed over to editors. Mark the content with `hand_over_after_create()`: the first site apply creates it, and later applies leave it alone. Edits made in WordPress are kept, later code changes to that content are not applied, and the apply reports it as unchanged. Its class styles and stylesheets stay managed by code. Remove the call to make code own the content again; the next apply then writes the code version.
-- Existing WordPress content can now be brought under code ownership. Add `adopt_existing()` to a page, post, or template whose slug or ID matches a page someone created in wp-admin. The next apply takes over that page instead of stopping with a conflict. It keeps the post ID and URL and replaces the content with the code version; WordPress keeps the old content as a revision. Combined with `hand_over_after_create()`, the page keeps its current content and only changes owner. Adoption refuses when several records match or when the only match is a translation.
-- Site applies now tell you when Builder-owned content is no longer in the Site Definition. A page you removed from code stays online as before, but the apply report lists it with what you can do next. When you are ready, a separate retire step (a PHP method your site plugin can call) moves those pages and posts to draft. Drafts keep their ID, slug, revisions, and settings, and WordPress never empties drafts automatically. When the page returns to code, the next apply restores its previous status. The front page, the posts page, handed-over content, components, patterns, and templates are only reported, never moved to draft.
+- Pages, posts, and templates can now be created once and then handed over to editors. Mark the content with `hand_over_after_create()`: the first site apply creates it, and later applies leave it alone. Edits made in WordPress are kept, later code changes to that content are not applied, and the apply reports it as unchanged. Its class styles and stylesheets stay managed by code. If an editor renames, trashes, or deletes the content, applies do not create it again; they report that it is missing. To give the content back to code, replace `hand_over_after_create()` with `reclaim_from_editors()`: the next apply writes the code version, or creates it again if it is gone. Removing `hand_over_after_create()` alone never overwrites an editor's work; the apply stops with a conflict that explains this.
+- Existing WordPress content can now be brought under code ownership. Add `adopt_existing()` to a page, post, or template whose slug or ID matches a page someone created in wp-admin. The next apply takes over that page instead of stopping with a conflict. It keeps the post ID and URL and replaces the content with the code version; the earlier version stays in the WordPress revision history. When that content type keeps no revisions, adoption is refused unless the page already matches the code version. Combined with `hand_over_after_create()`, the page keeps its current content and only changes owner. Adoption refuses when several records match or when the match is a translation, also when it is targeted by ID. If writing the code version fails, the page gets its previous title, content, status, slug, and excerpt back and stays with its editors.
+- Site applies now tell you when Builder-owned content is no longer in the Site Definition. A page you removed from code stays online as before, but the apply report lists it with what you can do next. When you are ready, a separate retire step (a PHP method your site plugin can call) moves the pages and posts you name to draft. It only runs with the exact Site Definition that was last applied in full without errors, so a stage, an unapplied change, or an empty definition can never draft your site. Drafts keep their ID, slug, revisions, and settings, and WordPress never empties drafts automatically. When the page returns to code, the next apply restores its previous status once its content is written, also when it returns as handed-over content. These are only reported, never moved to draft: the front page, the posts page, the privacy policy page, the WooCommerce shop, cart, checkout, account, and terms pages, parents of published pages, handed-over content, components, patterns, and templates.
 
 ### FIX
 
 - Class styles created through the Etch editor no longer break code-owned styles. When someone pastes, moves, or edits an element in Etch, Etch can create an empty copy of a code-owned class style in its own style list. That copy used to make later site applies fail with "Multiple existing Etch styles use selector", and the element lost its styling on the website. Applies now keep the code-owned style. Empty and identical copies follow the code-owned CSS, so linked elements render correctly again. Settings that the Etch editor drops when it saves are restored. A copy that someone filled with different CSS is never overwritten; the apply reports it and tells you how to resolve it.
 - Applies of part of a site, for example a component-only first stage, no longer delete the styles and website stylesheets of the pages, templates, and site settings outside that stage. Once the earlier stages are marked as partial, a later full apply reports those styles as unchanged instead of creating them again.
 - When you remove a page from code, its styles now stay until the page itself is trashed or deleted, so a page that is still online keeps its look.
+- When you remove a code-owned class style, a matching style that someone had written in the Etch editor gets its own CSS back instead of being emptied. This also works when the editor saved the code-owned style again.
+- Applies that only check content no longer clean up styles while another apply is running.
 - Sites with WPML translations no longer fail with "Multiple native Site entities claim this identity". Translations that copied the Builder's ownership details are recognised and set aside, and applies never write to a translation. Sites without WPML are unaffected.
 
 ### ENHANCEMENT
@@ -39,7 +41,9 @@ Use this changelog as an end-user document, not a developer log.
 
 - `overwrite()` has no effect on compiled site applies. Those applies always write code-owned content, which matches 2.0.x behaviour. Use `hand_over_after_create()` for content that editors should own.
 - Pages registered through the older direct registration path, before compiled site applies, carry no ownership record. A compiled apply therefore treats them like wp-admin pages. Use `adopt_existing()` to bring them under code. Setting the ownership post meta by hand also still works.
-- If your site registers in stages (for example components first, then the full site), every stage except the last must be marked as partial. Otherwise the early stage removes the styles of every page and template on each run, and reports them as removed from code.
+- If your site registers in stages (for example components first, then the full site), every stage except the last must be marked as partial. An unmarked early stage removes, on every run, the class styles and website stylesheets of the site settings and of every page and template outside that stage. It also reports those pages as removed from code. Never pass a stage to the retire step; it refuses one that was not the last full apply.
+- Handed-over content now carries its own ownership value. If you go back to a 2.0.x release, those applies report handed-over content as a conflict instead of overwriting it.
+- The retire step now needs the list of pages and posts to retire. Calls without it stop with an error before anything changes.
 - Multilingual sites: the plugin that ships your site should tell WPML not to copy the Builder's ownership details to translations. This package now handles copied details safely either way.
 - 2.0.x migration reports re-checked for this release:
   - The 2.0.4 package archive installs and autoloads normally.
@@ -54,19 +58,33 @@ Use this changelog as an end-user document, not a developer log.
   - `CompiledSitePlan::as_partial()` / `is_partial()`: a partial plan skips orphan resource cleanup and orphan reporting. `to_array()` adds `partial: true` only when the plan is partial.
   - `SitePersistence::diagnose( plan )`: read-only notices for editor style duplicates and, for complete plans, orphans.
   - `SitePersistence::orphans( plan )`: read-only orphan notices. A partial plan returns the blocking diagnostic `ETCH_SITE_PERSISTENCE_ORPHANS_PARTIAL_PLAN`.
-  - `SitePersistence::retire_orphans( plan )`: runs under the apply lock and moves retirable orphans to draft. Each result has code `ETCH_SITE_PERSISTENCE_ORPHAN_RETIRED`.
+  - `AbstractContentBuilder::reclaim_from_editors( bool = true )` / `reclaims_from_editors()`: lets a managed apply take back handed-over content. `CompiledSiteEntity::new()` takes a sixth `bool $reclaim_from_editors = false` argument (pages, posts, templates only), exposes `reclaims_from_editors()`, and adds `reclaim_from_editors: true` to `to_array()` only when it is set.
+  - `SitePersistence::retire_orphans( CompiledSitePlan $plan, array $identities )`: fails closed. It retires only the listed identities and runs under the apply lock. It runs the same blocking, ordering, and ownership validation as `apply()`. Before any change it returns a blocking diagnostic when:
+    - the plan is partial (`ETCH_SITE_PERSISTENCE_ORPHANS_PARTIAL_PLAN`);
+    - the plan has no page, post, or template (`ETCH_SITE_PERSISTENCE_ORPHANS_NO_CONTENT`);
+    - no identities are given (`ETCH_SITE_PERSISTENCE_ORPHANS_NONE_SELECTED`);
+    - the plan digest differs from the last fully successful complete `apply()` (`ETCH_SITE_PERSISTENCE_ORPHANS_PLAN_NOT_APPLIED`).
+
+    Per identity the result is `ETCH_SITE_PERSISTENCE_ORPHAN_RETIRED` (updated), `ETCH_SITE_PERSISTENCE_ORPHAN_KEPT` (skipped, protected or not retirable), or `ETCH_SITE_PERSISTENCE_ORPHAN_NOT_FOUND` (conflict). The plan digest is SHA-256 of the JSON of `CompiledSitePlan::to_array()`. It is recorded only after a fully successful complete apply of a plan with page, post, or template entities. A failure to record it adds a failed `site:complete-plan` result.
+  - Filter `etch_builders_site_persistence_protected_post_ids( int[] $ids )`: more post IDs that are never retired. Built in: `page_on_front`, `page_for_posts`, `wp_page_for_privacy_policy`, the WooCommerce `woocommerce_{shop,cart,checkout,myaccount,terms}_page_id` options when set, and parents of published, scheduled, pending, or private posts.
+  - Orphan listing excludes posts targeted by a `page:id:N` or `post:id:N` identity in the plan, so moving a page from a slug identity to its ID never reports it as an orphan.
   - `SitePersistenceReport::notices()` / `with()`: a third constructor field. `to_array()` adds `notices` only when there are any. Notices never affect `is_success()`.
   - Store capability interfaces, implemented by `WordPressSitePersistenceStore`:
     - `SitePersistenceEditorStyleDuplicateInterface`
     - `SitePersistenceHandOverInterface`
     - `SitePersistenceNativeClaimInterface`
     - `SitePersistenceNativeOrphanInterface`
+  - Store interface shapes added in this release: `SitePersistenceHandOverInterface` has `is_handed_over()`, `was_handed_over()`, `mark_handed_over( identity, bool )`, and `forget_hand_over()`. `SitePersistenceNativeClaimInterface::claim_unowned_native_record( record, bool $replaces_content = true )` snapshots the post fields, and `release_native_claim()` restores them. `SitePersistenceNativeOrphanInterface` has `retire_owned_native_entity()`, `restore_retired_native_entity( record )`, `record_complete_plan_digest()`, and `complete_plan_digest()`. `owned_native_entities()` returns `{identity, kind, post_id, status, handed_over, retired, protected}`.
+  - Authoring contract: `site.page.definition`, `site.post.definition`, and `site.template.definition` list `hand_over_after_create`, `hands_over_after_create`, `adopt_existing`, `adopts_existing`, `reclaim_from_editors`, and `reclaims_from_editors`. `overwrite()` stays listed and accepted but is exported as `deprecated: true` with a reason. The new `@authoring-deprecated <reason>` doc tag does this without a PHP `@deprecated` tag, so projects that run phpstan-deprecation-rules are unaffected. The source digest changes; the capability catalog and recipe digests do not.
   - Filter `etch_builders_site_persistence_is_translation( bool $is_translation, WP_Post $post )` for multilingual plugins other than WPML.
 - New result codes:
   - `ETCH_SITE_PERSISTENCE_HANDED_OVER` (unchanged)
   - `ETCH_SITE_PERSISTENCE_ADOPTED` (updated)
   - `ETCH_SITE_PERSISTENCE_RESTORED` (updated)
-  - `ETCH_SITE_PERSISTENCE_ADOPTION_AMBIGUOUS`, `ETCH_SITE_PERSISTENCE_ADOPTION_TRANSLATION`, `ETCH_SITE_PERSISTENCE_ADOPTION_UNSUPPORTED` (all conflict)
+  - `ETCH_SITE_PERSISTENCE_ADOPTION_AMBIGUOUS`, `ETCH_SITE_PERSISTENCE_ADOPTION_TRANSLATION`, `ETCH_SITE_PERSISTENCE_ADOPTION_UNSUPPORTED`, `ETCH_SITE_PERSISTENCE_ADOPTION_NO_REVISIONS` (all conflict)
+  - `ETCH_SITE_PERSISTENCE_HANDED_OVER_MISSING` (unchanged: handed-over content is gone or no longer matches its identity, and is not created again)
+  - `ETCH_SITE_PERSISTENCE_HANDED_OVER_RECLAIM_REQUIRED` (conflict: managed plan for handed-over content without `reclaim_from_editors()`)
+  - `ETCH_SITE_PERSISTENCE_RECLAIMED` (updated)
   - `ETCH_SITE_PERSISTENCE_STYLE_EDITOR_DUPLICATE_ADOPTED` (updated)
 - New notice codes:
   - `ETCH_SITE_PERSISTENCE_ORPHAN` (warning)
@@ -75,10 +93,13 @@ Use this changelog as an end-user document, not a developer log.
   - `ETCH_SITE_PERSISTENCE_STYLE_EDITOR_DUPLICATE_DIVERGENT` (warning)
   - `ETCH_SITE_PERSISTENCE_STYLE_EDITOR_DUPLICATE_ADOPTABLE` (info, from `diagnose()` only)
 - New native state:
-  - Option `etch_builders_site_persistence_style_aliases`: editor duplicate ID mapped to `{canonical, hash}`.
-  - Post meta `etch_builders_site_persistence_handed_over`.
+  - Option `etch_builders_site_persistence_style_aliases`: editor duplicate ID mapped to `{canonical, hash, original?}`. `original` is the duplicate's payload before it became a mirror; removing the canonical style restores it, and only a mirror without one is reset to empty CSS.
+  - Owner value `honestlydesign/etch-builders#handed-over` in `etch_builders_site_persistence_owner` for handed-over content. 2.0.x compares the owner value exactly, so it treats this content as unowned and reports a conflict.
+  - Option `etch_builders_site_persistence_handed_over`: handed-over identity mapped to its post ID, so renamed, trashed, or deleted handed-over content is reported instead of created again.
+  - Option `etch_builders_site_persistence_complete_plan`: digest of the last fully successful complete plan.
   - Post meta `etch_builders_site_persistence_retired_status`: the status to restore.
 - Style resolution: `Style::resolve_id_for_selector()` ignores empty `default`-collection placeholders. It also ignores non-empty unrecorded `default` duplicates when a recorded owner exists (ledger, entity collection, or alias canonical), and maps aliases to their canonical ID.
+- Locking: `apply()` of a verify-only plan still takes no lock when nothing needs cleanup. When orphan resources would be deleted, it now waits for the apply lock and returns a failed `site:cleanup` result with `ETCH_SITE_PERSISTENCE_APPLY_LOCKED` when another apply holds it. `migrate_legacy_ownership()` now runs under the apply lock too.
 - Orphan resource cleanup keeps resources whose owner is a live (not trashed) Builder-owned post outside the plan. If the owned post list cannot be read, it keeps every resource.
 - Translation detection, used for native lookups, adoption, and orphan listing, checks in this order:
   1. The `_icl_lang_duplicate_of` meta.
@@ -86,7 +107,7 @@ Use this changelog as an end-user document, not a developer log.
   3. The package filter.
 
   A slug lookup that matches only translations maps to the original through `wpml_object_id`, or fails closed as a conflict. ID-targeted identities are not filtered. This was tested against stubbed filters only, not a real WPML install.
-- Partial stages: call `$plan->as_partial()` on every stage plan except the last. A non-partial stage plan reports every page and template outside it as an orphan, and `retire_orphans()` must only ever receive the full plan.
+- Partial stages: call `$plan->as_partial()` on every stage plan except the last. A non-partial stage plan deletes the class styles and global stylesheets owned by `site:root` and by pages and templates outside it, and reports those pages and templates as orphans. `retire_orphans()` refuses it, because its digest differs from the last full apply.
 - WPML: a site plugin's `wpml-config.xml` should mark the `etch_builders_site_persistence_*` post meta as not copied (`ignore`).
 - Devkit follow-ups (not in this package), in this order:
   - Call `->as_partial()` on bootstrap stage plans. Do this first, before notices are printed.
