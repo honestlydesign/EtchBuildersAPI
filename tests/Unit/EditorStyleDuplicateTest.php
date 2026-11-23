@@ -12,7 +12,7 @@ namespace HonestlyDesign\EtchBuilders\Tests\Unit;
 use HonestlyDesign\EtchBuilders\ClassStyleRegistry;
 use HonestlyDesign\EtchBuilders\CompiledSiteDiagnostic;
 use HonestlyDesign\EtchBuilders\Component;
-use HonestlyDesign\EtchBuilders\EtchBlocks\TextBlock;
+use HonestlyDesign\EtchBuilders\EtchBlocks\ElementBlock;
 use HonestlyDesign\EtchBuilders\CompiledSiteEntity;
 use HonestlyDesign\EtchBuilders\CompiledSiteEntityType;
 use HonestlyDesign\EtchBuilders\CompiledSiteOwnership;
@@ -430,6 +430,36 @@ final class EditorStyleDuplicateTest extends TestCase {
 	 * @runInSeparateProcess
 	 * @preserveGlobalState disabled
 	 */
+	public function test_upgrading_from_2_1_0_adopts_an_editor_duplicate_created_after_the_last_apply(): void {
+		$this->install_wordpress();
+		$legacy = $this->legacy_payload();
+		$GLOBALS['etch_builders_site_persistence_options'] = array(
+			'etch_styles' => array(
+				'component-site-nav' => $legacy,
+				'4ndy1la'            => $this->editor_placeholder(),
+			),
+			'etch_builders_site_persistence_resources' => $this->ledger( $legacy ),
+		);
+		Environment::configure( $this->wordpress_storage(), new NullMode(), new NullAssetRegistry() );
+
+		$styles = EntityStyleSet::from_file( 'component:SiteNav', $this->write_css( '.site-nav { display: flex; }' ) );
+		$report = ( new WordPressSitePersistence() )->apply( $this->site_plan( $styles ) );
+
+		self::assertTrue( $report->is_success() );
+		self::assertSame(
+			array( 'style:component-site-nav' => 'updated', 'style:4ndy1la' => 'updated' ),
+			$this->style_outcomes( $report )
+		);
+		$native = $this->option( 'etch_styles' );
+		self::assertSame( 'default', $native['component-site-nav']['collection'] );
+		self::assertSame( 'display: flex', $native['4ndy1la']['css'], 'Elements the editor linked to the copy render the code-owned CSS.' );
+		self::assertCount( 2, $native );
+	}
+
+	/**
+	 * @runInSeparateProcess
+	 * @preserveGlobalState disabled
+	 */
 	public function test_after_an_editor_save_builders_still_recognizes_its_default_styles(): void {
 		$this->install_wordpress();
 		Environment::configure( $this->wordpress_storage(), new NullMode(), new NullAssetRegistry() );
@@ -498,11 +528,16 @@ final class EditorStyleDuplicateTest extends TestCase {
 	}
 
 	/**
-	 * A complete plan for one component that owns the given Entity Style Set.
+	 * A complete plan for one component that owns the given Entity Style Set
+	 * and uses its `.site-nav` class.
 	 */
 	private function site_plan( EntityStyleSet $styles ): CompiledSitePlan {
 		return SiteDefinition::new()
-			->component( Component::new( 'SiteNav', 'Site navigation' )->key( 'SiteNav' )->blocks( TextBlock::new()->content( 'Nav' ) ) )
+			->component(
+				Component::new( 'SiteNav', 'Site navigation' )
+					->key( 'SiteNav' )
+					->blocks( ElementBlock::new()->tag( 'nav' )->class_style( $styles->class_reference( '.site-nav' ) ) )
+			)
 			->supporting( $styles )
 			->compile();
 	}
