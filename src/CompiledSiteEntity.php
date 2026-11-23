@@ -22,7 +22,8 @@ final class CompiledSiteEntity {
 		private readonly CompiledSiteEntityType $type,
 		private readonly string $identity,
 		private readonly array $payload,
-		private readonly CompiledSiteEntityPersistenceIntent $persistence_intent
+		private readonly CompiledSiteEntityPersistenceIntent $persistence_intent,
+		private readonly bool $adopt_existing
 	) {
 	}
 
@@ -32,12 +33,15 @@ final class CompiledSiteEntity {
 	 * @param CompiledSiteEntityType $type     Entity category.
 	 * @param string                 $identity Stable type:key identity.
 	 * @param array<string, mixed>   $payload  Serialized entity payload.
+	 * @param bool                   $adopt_existing Whether an apply may take over one existing native
+	 *                                               record with this identity that the Builder does not own yet.
 	 */
 	public static function new(
 		CompiledSiteEntityType $type,
 		string $identity,
 		array $payload,
-		CompiledSiteEntityPersistenceIntent $persistence_intent = CompiledSiteEntityPersistenceIntent::MANAGED
+		CompiledSiteEntityPersistenceIntent $persistence_intent = CompiledSiteEntityPersistenceIntent::MANAGED,
+		bool $adopt_existing = false
 	): self {
 		$identity = self::validate_identity( $identity, $type );
 		AcyclicArrayGuard::assert_acyclic( $payload );
@@ -45,8 +49,20 @@ final class CompiledSiteEntity {
 		if ( CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE === $persistence_intent && CompiledSiteEntityType::LOOP_PRESET !== $type ) {
 			throw new InvalidArgumentException( 'Only a loop preset can currently be a verified native Site dependency.' );
 		}
+		if ( CompiledSiteEntityPersistenceIntent::CREATE_ONLY === $persistence_intent
+			&& ! in_array( $type, array( CompiledSiteEntityType::PAGE, CompiledSiteEntityType::POST, CompiledSiteEntityType::TEMPLATE ), true )
+		) {
+			throw new InvalidArgumentException( 'Only pages, posts, and templates can be created once and handed over to editors.' );
+		}
 
-		return new self( $type, $identity, $payload, $persistence_intent );
+		if ( $adopt_existing
+			&& ( CompiledSiteEntityPersistenceIntent::VERIFY_NATIVE === $persistence_intent
+				|| ! in_array( $type, array( CompiledSiteEntityType::PAGE, CompiledSiteEntityType::POST, CompiledSiteEntityType::TEMPLATE ), true ) )
+		) {
+			throw new InvalidArgumentException( 'Only pages, posts, and templates can adopt an existing native record.' );
+		}
+
+		return new self( $type, $identity, $payload, $persistence_intent, $adopt_existing );
 	}
 
 	public function type(): CompiledSiteEntityType {
@@ -69,7 +85,14 @@ final class CompiledSiteEntity {
 	}
 
 	/**
-	 * @return array{type: string, identity: string, payload: array<string, mixed>, persistence_intent?: string}
+	 * Whether an apply may take over one existing unowned native record with this identity.
+	 */
+	public function adopts_existing(): bool {
+		return $this->adopt_existing;
+	}
+
+	/**
+	 * @return array{type: string, identity: string, payload: array<string, mixed>, persistence_intent?: string, adopt_existing?: true}
 	 */
 	public function to_array(): array {
 		$record = array(
@@ -79,6 +102,9 @@ final class CompiledSiteEntity {
 		);
 		if ( CompiledSiteEntityPersistenceIntent::MANAGED !== $this->persistence_intent ) {
 			$record['persistence_intent'] = $this->persistence_intent->value;
+		}
+		if ( $this->adopt_existing ) {
+			$record['adopt_existing'] = true;
 		}
 
 		return $record;

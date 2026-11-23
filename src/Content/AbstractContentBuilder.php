@@ -79,6 +79,20 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	private bool $dev_only = false;
 
 	/**
+	 * Whether compiled Site applies create this content once and then leave it to editors.
+	 *
+	 * @var bool
+	 */
+	private bool $hand_over_after_create = false;
+
+	/**
+	 * Whether compiled Site applies may take over one existing unowned native record.
+	 *
+	 * @var bool
+	 */
+	private bool $adopt_existing = false;
+
+	/**
 	 * Content buffer.
 	 *
 	 * @var ContentBuffer
@@ -265,6 +279,58 @@ abstract class AbstractContentBuilder implements SiteEntityCompilerMetadataInter
 	 */
 	public function is_dev_only(): bool {
 		return $this->dev_only;
+	}
+
+	/**
+	 * Create this content once, then hand it over to editors.
+	 *
+	 * A compiled Site apply creates the native record when it is missing and
+	 * never writes it again: later applies leave edits made in WordPress and
+	 * later code changes alike untouched, and report the record as unchanged.
+	 * Class styles and stylesheets the content uses stay code-owned. Calling
+	 * it with false returns the record to normal code ownership, so the next
+	 * apply writes the compiled content again.
+	 *
+	 * @param bool $hand_over Whether to hand the content over after creating it.
+	 * @authoring-contract-version 1.0
+	 */
+	public function hand_over_after_create( bool $hand_over = true ): static {
+		$this->hand_over_after_create = $hand_over;
+
+		return $this;
+	}
+
+	/**
+	 * Whether compiled Site applies create this content once and then leave it to editors.
+	 */
+	public function hands_over_after_create(): bool {
+		return $this->hand_over_after_create;
+	}
+
+	/**
+	 * Take over an existing WordPress record with the same identity.
+	 *
+	 * By default an apply refuses to touch a page, post, or template it did
+	 * not create and reports a conflict. With this flag the apply claims the
+	 * record when exactly one matching record exists that the Builder does
+	 * not own and that is not a translation. Managed content is then
+	 * overwritten with the compiled version (WordPress keeps a revision);
+	 * content that is also handed over keeps its current WordPress content.
+	 *
+	 * @param bool $adopt Whether to adopt an existing record.
+	 * @authoring-contract-version 1.0
+	 */
+	public function adopt_existing( bool $adopt = true ): static {
+		$this->adopt_existing = $adopt;
+
+		return $this;
+	}
+
+	/**
+	 * Whether compiled Site applies may take over one existing unowned native record.
+	 */
+	public function adopts_existing(): bool {
+		return $this->adopt_existing;
 	}
 
 	/**

@@ -19,6 +19,9 @@ use HonestlyDesign\EtchBuilders\CompiledSiteDiagnostic;
 use HonestlyDesign\EtchBuilders\CompiledSiteDiagnosticSeverity;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceApplyLockInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceEditorStyleDuplicateInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceHandOverInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceNativeClaimInterface;
+use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceNativeOrphanInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceNativeRetirementInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceRecordAdoptionInterface;
 use HonestlyDesign\EtchBuilders\Contracts\SitePersistenceResourceStoreInterface;
@@ -39,7 +42,7 @@ use Throwable;
  * adapter keeps builder ownership and snapshots beside native WordPress data
  * so native records remain inspectable by Etch and other WordPress tooling.
  */
-final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInterface, SitePersistenceEditorStyleDuplicateInterface, SitePersistenceNativeRetirementInterface, SitePersistenceRecordAdoptionInterface, SitePersistenceResourceStoreInterface, SitePersistenceStylesheetAdoptionInterface {
+final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInterface, SitePersistenceEditorStyleDuplicateInterface, SitePersistenceHandOverInterface, SitePersistenceNativeClaimInterface, SitePersistenceNativeOrphanInterface, SitePersistenceNativeRetirementInterface, SitePersistenceRecordAdoptionInterface, SitePersistenceResourceStoreInterface, SitePersistenceStylesheetAdoptionInterface {
 
 	private const OPTION_PREFIX = 'etch_builders_site_record_';
 
@@ -81,6 +84,16 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 
 	private const CONTENT_IDENTITY_META = 'etch_builders_site_persistence_identity';
 
+	private const HANDED_OVER_META = 'etch_builders_site_persistence_handed_over';
+
+	private const RETIRED_STATUS_META = 'etch_builders_site_persistence_retired_status';
+
+	/** Package filter: `(bool $is_translation, WP_Post $post)`, for multilingual plugins other than WPML. */
+	private const TRANSLATION_FILTER = 'etch_builders_site_persistence_is_translation';
+
+	/** WPML marks posts it duplicated from an original with this meta key. */
+	private const WPML_DUPLICATE_META = '_icl_lang_duplicate_of';
+
 	private const RESOURCE_RECORDS_OPTION = 'etch_builders_site_persistence_resources';
 
 	private const ENTITY_RECORDS_OPTION = 'etch_builders_site_persistence_entities';
@@ -100,12 +113,13 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 	public function find( string $identity ): ?SitePersistenceRecord {
 		$kind = $this->native_kind( $identity );
 		if ( null !== $kind && $this->is_native_post_kind( $kind ) ) {
-			$posts = $this->find_native_posts( $identity, $kind );
+			$lookup = $this->native_lookup( $identity, $kind );
+			$posts  = $lookup['posts'];
 			if ( array() === $posts ) {
 				return null;
 			}
 
-			return $this->record_from_native_post( $identity, $kind, $posts[0], count( $posts ) > 1 );
+			return $this->record_from_native_post( $identity, $kind, $posts[0], count( $posts ) > 1 || $lookup['translation_only'] );
 		}
 		if ( 'style' === $kind ) {
 			return $this->find_style( $identity );
@@ -318,9 +332,13 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 			return $result;
 		}
 
-		$posts = $this->find_native_posts( $record->identity(), $kind );
+		$lookup = $this->native_lookup( $record->identity(), $kind );
+		$posts  = $lookup['posts'];
 		if ( count( $posts ) > 1 ) {
 			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_CONFLICT', 'Multiple native Site entities claim this identity.' );
+		}
+		if ( $lookup['translation_only'] ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_CONFLICT', 'Only a translation matches this identity, and its original could not be found; translations are never written.' );
 		}
 
 		$existing = $posts[0] ?? null;
@@ -604,7 +622,130 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 		return $native;
 	}
 
+	/**
+	 * Native candidates for one identity, with translations set aside.
+	 *
+	 * Multilingual plugins such as WPML copy post meta (including the
+	 * Builder's ownership and key meta) and often the slug to translations,
+	 * so a lookup can match the original and its translations. Translations
+	 * are dropped whenever an original remains. When only translations
+	 * match, their original is looked up through WPML; if that fails the
+	 * translations are returned with `translation_only` set, so callers fail
+	 * closed instead of treating the identity as missing or writing a
+	 * translation. ID-targeted identities are explicit and never filtered.
+	 *
+	 * @return array{posts: array<int, object>, translation_only: bool}
+	 */
+	private function native_lookup( string $identity, string $kind ): array {
+		$posts = $this->raw_native_posts( $identity, $kind );
+		if ( array() === $posts || str_contains( $identity, ':id:' ) ) {
+			return array( 'posts' => $posts, 'translation_only' => false );
+		}
+
+		$originals    = array();
+		$translations = array();
+		foreach ( $posts as $post ) {
+			if ( $this->is_translation( $post ) ) {
+				$translations[] = $post;
+			} else {
+				$originals[] = $post;
+			}
+		}
+		if ( array() !== $originals ) {
+			return array( 'posts' => $originals, 'translation_only' => false );
+		}
+
+		$mapped = array();
+		foreach ( $translations as $translation ) {
+			$original = $this->translation_original( $translation );
+			$values   = null === $original ? array() : get_object_vars( $original );
+			if ( null !== $original
+				&& (string) ( $values['post_name'] ?? '' ) === (string) ( get_object_vars( $translation )['post_name'] ?? '' )
+				&& ! $this->is_translation( $original )
+			) {
+				$mapped[ $this->post_id( $original ) ] = $original;
+			}
+		}
+		if ( 1 === count( $mapped ) ) {
+			return array( 'posts' => array_values( $mapped ), 'translation_only' => false );
+		}
+
+		return array( 'posts' => $translations, 'translation_only' => true );
+	}
+
+	/**
+	 * Whether a native post is a translation (not the original) of other content.
+	 *
+	 * Detects WPML without depending on it: WPML duplicates carry
+	 * `_icl_lang_duplicate_of`, and WPML's public `wpml_element_language_details`
+	 * filter reports a source language for translations. Other multilingual
+	 * plugins can answer through the `etch_builders_site_persistence_is_translation`
+	 * filter.
+	 */
+	private function is_translation( object $post ): bool {
+		$values  = get_object_vars( $post );
+		$post_id = $this->post_id( $post );
+		$is      = false;
+
+		if ( $post_id > 0 && '' !== (string) \get_post_meta( $post_id, self::WPML_DUPLICATE_META, true ) ) {
+			$is = true;
+		} elseif ( $post_id > 0 && \function_exists( 'has_filter' ) && \function_exists( 'apply_filters' ) && \has_filter( 'wpml_element_language_details' ) ) {
+			$details = \apply_filters(
+				'wpml_element_language_details',
+				null,
+				array(
+					'element_id'   => $post_id,
+					'element_type' => (string) ( $values['post_type'] ?? '' ),
+				)
+			);
+			$details = is_object( $details ) ? get_object_vars( $details ) : ( is_array( $details ) ? $details : array() );
+			$source  = $details['source_language_code'] ?? null;
+			$is      = is_string( $source ) && '' !== $source;
+		}
+
+		return \function_exists( 'apply_filters' ) ? (bool) \apply_filters( self::TRANSLATION_FILTER, $is, $post ) : $is;
+	}
+
+	/**
+	 * The original of a WPML translation, or null when it cannot be resolved.
+	 */
+	private function translation_original( object $translation ): ?object {
+		$values  = get_object_vars( $translation );
+		$post_id = $this->post_id( $translation );
+		$type    = (string) ( $values['post_type'] ?? '' );
+		$source  = (int) \get_post_meta( $post_id, self::WPML_DUPLICATE_META, true );
+
+		if ( $source < 1 && \function_exists( 'has_filter' ) && \function_exists( 'apply_filters' ) && \has_filter( 'wpml_element_language_details' ) && \has_filter( 'wpml_object_id' ) ) {
+			$details  = \apply_filters( 'wpml_element_language_details', null, array( 'element_id' => $post_id, 'element_type' => $type ) );
+			$details  = is_object( $details ) ? get_object_vars( $details ) : ( is_array( $details ) ? $details : array() );
+			$language = $details['source_language_code'] ?? null;
+			if ( is_string( $language ) && '' !== $language ) {
+				$source = (int) \apply_filters( 'wpml_object_id', $post_id, $type, false, $language );
+			}
+		}
+		if ( $source < 1 || $source === $post_id ) {
+			return null;
+		}
+
+		$original = \get_post( $source );
+		if ( ! is_object( $original ) || (string) ( get_object_vars( $original )['post_type'] ?? '' ) !== $type ) {
+			return null;
+		}
+
+		return $original;
+	}
+
+	/**
+	 * @return array<int, object>
+	 */
 	private function find_native_posts( string $identity, string $kind ): array {
+		return $this->native_lookup( $identity, $kind )['posts'];
+	}
+
+	/**
+	 * @return array<int, object>
+	 */
+	private function raw_native_posts( string $identity, string $kind ): array {
 		if ( ! \function_exists( 'get_post' ) || ! \function_exists( 'get_posts' ) || ! \function_exists( 'get_page_by_path' ) ) {
 			return array();
 		}
@@ -2012,6 +2153,237 @@ final class WordPressSitePersistenceStore implements SitePersistenceApplyLockInt
 	}
 
 	/** {@inheritdoc} */
+	/**
+	 * The single Builder-owned, non-translation native post for one content identity.
+	 */
+	private function owned_native_post( string $identity ): ?object {
+		$kind = $this->native_kind( $identity );
+		if ( null === $kind || ! $this->is_native_post_kind( $kind ) ) {
+			return null;
+		}
+
+		$lookup = $this->native_lookup( $identity, $kind );
+		if ( 1 !== count( $lookup['posts'] ) || $lookup['translation_only'] ) {
+			return null;
+		}
+
+		$post = $lookup['posts'][0];
+
+		return self::OWNER_VALUE === (string) \get_post_meta( $this->post_id( $post ), self::OWNER_META, true ) ? $post : null;
+	}
+
+	/** {@inheritdoc} */
+	public function is_handed_over( string $identity ): bool {
+		$post = $this->owned_native_post( $identity );
+
+		return null !== $post && '' !== (string) \get_post_meta( $this->post_id( $post ), self::HANDED_OVER_META, true );
+	}
+
+	/** {@inheritdoc} */
+	public function mark_handed_over( string $identity, bool $handed_over ): RegistrationResult {
+		$post = $this->owned_native_post( $identity );
+		if ( null === $post ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_MISSING', 'No single Builder-owned native record exists for this identity.' );
+		}
+
+		$post_id = $this->post_id( $post );
+		if ( $handed_over ) {
+			return $this->update_native_meta( $post_id, self::HANDED_OVER_META, '1' )
+				? RegistrationResult::success()
+				: RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_META_FAILED', 'WordPress could not write the hand-over marker.' );
+		}
+
+		\delete_post_meta( $post_id, self::HANDED_OVER_META );
+
+		return '' === (string) \get_post_meta( $post_id, self::HANDED_OVER_META, true )
+			? RegistrationResult::success()
+			: RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_META_FAILED', 'WordPress could not clear the hand-over marker.' );
+	}
+
+	/** {@inheritdoc} */
+	public function claim_unowned_native_record( SitePersistenceRecord $record ): RegistrationResult {
+		$kind = $this->native_kind( $record->identity() );
+		if ( ! in_array( $kind, array( 'page', 'post', 'template' ), true ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ADOPTION_UNSUPPORTED', 'Only pages, posts, and templates can adopt existing WordPress content.' );
+		}
+		if ( ! \function_exists( 'update_post_meta' ) || ! \function_exists( 'get_post_meta' ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_RUNTIME_UNAVAILABLE', 'WordPress post meta functions are unavailable.' );
+		}
+
+		$lookup = $this->native_lookup( $record->identity(), $kind );
+		if ( $lookup['translation_only'] ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ADOPTION_TRANSLATION', 'Only a translation matches this identity; adopt the original content instead.' );
+		}
+		if ( 1 !== count( $lookup['posts'] ) ) {
+			return RegistrationResult::error(
+				'ETCH_SITE_PERSISTENCE_ADOPTION_AMBIGUOUS',
+				array() === $lookup['posts'] ? 'No existing WordPress content matches this identity.' : 'Several WordPress records match this identity; keep one before adopting it.'
+			);
+		}
+
+		$post      = $lookup['posts'][0];
+		$post_id   = $this->post_id( $post );
+		$post_type = (string) ( get_object_vars( $post )['post_type'] ?? '' );
+		$expected  = match ( $kind ) {
+			'page'     => 'page',
+			'template' => 'wp_template',
+			default    => (string) ( $record->payload()['post_type'] ?? '' ),
+		};
+		if ( $post_id < 1 || $expected !== $post_type ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_CONFLICT', 'The existing WordPress record has a different post type.' );
+		}
+		if ( '' !== (string) \get_post_meta( $post_id, self::OWNER_META, true ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_CONFLICT', 'The existing WordPress record already has an owner.' );
+		}
+
+		if ( ! $this->update_native_meta( $post_id, self::CONTENT_IDENTITY_META, $record->identity() )
+			|| ! $this->update_native_meta( $post_id, self::OWNER_META, self::OWNER_VALUE )
+		) {
+			\delete_post_meta( $post_id, self::OWNER_META );
+			\delete_post_meta( $post_id, self::CONTENT_IDENTITY_META );
+
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_META_FAILED', 'WordPress could not write the ownership metadata.' );
+		}
+
+		return RegistrationResult::success();
+	}
+
+	/** {@inheritdoc} */
+	public function release_native_claim( SitePersistenceRecord $record ): RegistrationResult {
+		$post = $this->owned_native_post( $record->identity() );
+		if ( null === $post ) {
+			return RegistrationResult::success();
+		}
+
+		$post_id = $this->post_id( $post );
+		foreach ( array( self::OWNER_META, self::CONTENT_IDENTITY_META, self::SNAPSHOT_META, self::NATIVE_FINGERPRINT_META, self::HANDED_OVER_META ) as $key ) {
+			\delete_post_meta( $post_id, $key );
+		}
+
+		return '' === (string) \get_post_meta( $post_id, self::OWNER_META, true )
+			? RegistrationResult::success()
+			: RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_META_FAILED', 'WordPress could not remove the ownership metadata.' );
+	}
+
+	/** {@inheritdoc} */
+	public function owned_native_entities(): array {
+		if ( ! \function_exists( 'get_posts' ) || ! \function_exists( 'get_post_types' ) || ! \function_exists( 'get_post_meta' ) ) {
+			return array();
+		}
+
+		$posts = \get_posts(
+			array(
+				'post_type'        => array_values( array_map( 'strval', \get_post_types( array(), 'names' ) ) ),
+				'post_status'      => array( 'publish', 'future', 'draft', 'pending', 'private' ),
+				'posts_per_page'   => -1,
+				'orderby'          => 'ID',
+				'order'            => 'ASC',
+				'no_found_rows'    => true,
+				'suppress_filters' => true,
+				'meta_key'         => self::OWNER_META,
+				'meta_value'       => self::OWNER_VALUE,
+			)
+		);
+
+		$front    = \function_exists( 'get_option' ) ? array( (int) \get_option( 'page_on_front', 0 ), (int) \get_option( 'page_for_posts', 0 ) ) : array();
+		$entities = array();
+		foreach ( $posts as $post ) {
+			if ( ! is_object( $post ) || $this->is_translation( $post ) ) {
+				continue;
+			}
+
+			$post_id   = $this->post_id( $post );
+			$values    = get_object_vars( $post );
+			$post_type = (string) ( $values['post_type'] ?? '' );
+			$identity  = self::BLOCK_POST_TYPE === $post_type
+				? $this->block_identity( $post_id )
+				: (string) \get_post_meta( $post_id, self::CONTENT_IDENTITY_META, true );
+			$kind      = $this->native_kind( $identity );
+			if ( $post_id < 1 || null === $kind || ! $this->is_native_post_kind( $kind ) || isset( $entities[ $identity ] ) ) {
+				continue;
+			}
+
+			$entities[ $identity ] = array(
+				'identity'    => $identity,
+				'kind'        => $kind,
+				'status'      => (string) ( $values['post_status'] ?? '' ),
+				'handed_over' => '' !== (string) \get_post_meta( $post_id, self::HANDED_OVER_META, true ),
+				'retired'     => '' !== (string) \get_post_meta( $post_id, self::RETIRED_STATUS_META, true ),
+				'front_page'  => 'page' === $post_type && in_array( $post_id, $front, true ),
+			);
+		}
+
+		return array_values( $entities );
+	}
+
+	private function block_identity( int $post_id ): string {
+		$component = (string) \get_post_meta( $post_id, self::COMPONENT_KEY_META, true );
+		if ( '' !== $component ) {
+			return 'component:' . $component;
+		}
+		$pattern = (string) \get_post_meta( $post_id, self::PATTERN_KEY_META, true );
+
+		return '' !== $pattern ? 'pattern:' . $pattern : '';
+	}
+
+	/** {@inheritdoc} */
+	public function retire_owned_native_entity( string $identity ): RegistrationResult {
+		$kind = $this->native_kind( $identity );
+		if ( ! in_array( $kind, array( 'page', 'post' ), true ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ORPHAN_RETIRE_UNSUPPORTED', 'Only pages and posts can be retired.' );
+		}
+		if ( ! \function_exists( 'wp_update_post' ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_RUNTIME_UNAVAILABLE', 'WordPress post persistence functions are unavailable.' );
+		}
+
+		$post = $this->owned_native_post( $identity );
+		if ( null === $post ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_MISSING', 'No single Builder-owned native record exists for this identity.' );
+		}
+
+		$post_id = $this->post_id( $post );
+		$status  = (string) ( get_object_vars( $post )['post_status'] ?? '' );
+		if ( in_array( $status, array( '', 'draft', 'trash', 'auto-draft' ), true ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_ORPHAN_RETIRE_UNSUPPORTED', sprintf( 'Content with status "%s" is not retired.', $status ) );
+		}
+		if ( ! $this->update_native_meta( $post_id, self::RETIRED_STATUS_META, $status ) ) {
+			return RegistrationResult::error( 'ETCH_SITE_PERSISTENCE_META_FAILED', 'WordPress could not record the status to restore later.' );
+		}
+
+		$updated = $this->normalize_native_post_id( \wp_update_post( array( 'ID' => $post_id, 'post_status' => 'draft' ), true ) );
+		if ( $updated instanceof RegistrationResult ) {
+			\delete_post_meta( $post_id, self::RETIRED_STATUS_META );
+
+			return $updated;
+		}
+
+		return RegistrationResult::success();
+	}
+
+	/** {@inheritdoc} */
+	public function restore_retired_native_entity( string $identity ): ?RegistrationResult {
+		$post = $this->owned_native_post( $identity );
+		if ( null === $post ) {
+			return null;
+		}
+
+		$post_id  = $this->post_id( $post );
+		$previous = (string) \get_post_meta( $post_id, self::RETIRED_STATUS_META, true );
+		if ( '' === $previous ) {
+			return null;
+		}
+
+		if ( 'draft' === (string) ( get_object_vars( $post )['post_status'] ?? '' ) ) {
+			$updated = $this->normalize_native_post_id( \wp_update_post( array( 'ID' => $post_id, 'post_status' => $previous ), true ) );
+			if ( $updated instanceof RegistrationResult ) {
+				return $updated;
+			}
+		}
+		\delete_post_meta( $post_id, self::RETIRED_STATUS_META );
+
+		return RegistrationResult::success();
+	}
+
 	public function acquire_site_apply_lock(): bool {
 		return $this->acquire_claim( self::APPLY_LOCK_OPTION );
 	}
